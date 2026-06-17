@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Panel Studio — 首页原型</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   CSS Custom Properties — 与演播厅共用 Design System
+   ============================================================ */
+:root {
+  --color-bg:          #020617;
+  --color-bg-elevated: #0F172A;
+  --color-bg-card:     #1E293B;
+  --color-bg-hover:    #1A1E2F;
+  --color-border:      #334155;
+  --color-border-light:#2A2D3E;
+  --color-fg:          #F8FAFC;
+  --color-fg-muted:    #94A3B8;
+  --color-fg-dim:      #64748B;
+  --color-accent:      #22C55E;
+  --color-accent-dim:  #16A34A;
+  --color-destructive:  #EF4444;
+  --color-warning:      #FB923C;
+  --color-info:         #3B82F6;
+
+  --font-heading: 'Fira Code', 'Cascadia Code', monospace;
+  --font-body:    'Fira Sans', system-ui, -apple-system, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --z-background: -1;
+  --z-base:       0;
+  --z-dropdown:   20;
+  --z-sticky:     30;
+  --z-overlay:    40;
+  --z-modal:      50;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--color-fg);
+  background: var(--color-bg);
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+
+/* ============================================================
+   App Shell
+   ============================================================ */
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Topbar ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  gap: 16px;
+}
+
+.topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.topbar__brand-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.3); }
+}
+
+.topbar__nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.topbar__nav-link {
+  color: var(--color-fg-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 200ms ease;
+  cursor: pointer;
+}
+
+.topbar__nav-link:hover,
+.topbar__nav-link--active {
+  color: var(--color-fg);
+}
+
+/* ============================================================
+   Hero Section
+   ============================================================ */
+.hero {
+  text-align: center;
+  padding: 64px 24px 48px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 50% at 50% 30%, rgba(34,197,94,0.04) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 40% at 30% 70%, rgba(99,102,241,0.03) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 40% at 70% 70%, rgba(59,130,246,0.03) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: var(--z-background);
+}
+
+.hero__icon {
+  width: 64px; height: 64px;
+  margin: 0 auto 20px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+.hero__title {
+  font-family: var(--font-heading);
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+.hero__title-accent {
+  color: var(--color-accent);
+}
+
+.hero__subtitle {
+  font-size: 1.05rem;
+  color: var(--color-fg-muted);
+  max-width: 520px;
+  margin: 0 auto 28px;
+  line-height: 1.7;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+.hero__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  background: var(--color-accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 200ms ease;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+.hero__cta:hover {
+  background: var(--color-accent-dim);
+  box-shadow: 0 0 24px rgba(34, 197, 94, 0.25);
+  transform: translateY(-1px);
+}
+
+.hero__cta:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.hero__stats {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  margin-top: 36px;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+.hero__stat {
+  text-align: center;
+}
+
+.hero__stat-value {
+  font-family: var(--font-heading);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.hero__stat-label {
+  font-size: 0.75rem;
+  color: var(--color-fg-dim);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ============================================================
+   Main Content Area
+   ============================================================ */
+.content {
+  flex: 1;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+  width: 100%;
+}
+
+/* ── Section Header ── */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-header__title {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-header__count {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-light);
+  border-radius: 20px;
+  padding: 2px 12px;
+  font-size: 0.7rem;
+  font-family: var(--font-heading);
+  color: var(--color-fg-muted);
+}
+
+/* ── Tab Switcher ── */
+.tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  padding: 10px 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-fg-dim);
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  transition: all 200ms ease;
+  font-family: var(--font-body);
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--color-fg-muted);
+}
+
+.tab--active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+}
+
+.tab--active:hover {
+  color: var(--color-accent);
+}
+
+/* ── Discussion Cards ── */
+.card-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: all 200ms ease;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.card:hover {
+  border-color: var(--color-fg-dim);
+  background: var(--color-bg-hover);
+  transform: translateX(3px);
+}
+
+.card:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.card__indicator {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.card__indicator--live {
+  background: var(--color-accent);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
+}
+
+.card__indicator--ended {
+  background: var(--color-fg-dim);
+}
+
+.card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.card__topic {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.card__meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--color-fg-dim);
+}
+
+.card__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.card__badge--live {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--color-accent);
+}
+
+.card__badge--ended {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--color-fg-dim);
+}
+
+.card__badge-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.card__badge-dot--live {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.card__chevron {
+  color: var(--color-fg-dim);
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+}
+
+.card:hover .card__chevron {
+  transform: translateX(4px);
+  color: var(--color-fg-muted);
+}
+
+.card__panel-preview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.panel-dot {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: #fff;
+  font-family: var(--font-heading);
+  border: 1px solid rgba(255,255,255,0.15);
+}
+
+.panel-dot--more {
+  background: var(--color-bg-hover);
+  color: var(--color-fg-dim);
+  font-size: 0.5rem;
+}
+
+/* ── Empty State ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 20px;
+  text-align: center;
+  color: var(--color-fg-dim);
+  gap: 12px;
+}
+
+.empty-state__icon {
+  font-size: 2.5rem;
+  opacity: 0.2;
+}
+
+.empty-state__title {
+  font-family: var(--font-heading);
+  font-size: 0.95rem;
+  color: var(--color-fg-muted);
+}
+
+.empty-state__text {
+  font-size: 0.82rem;
+  max-width: 360px;
+  line-height: 1.6;
+}
+
+.empty-state__cta {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  background: var(--color-accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.empty-state__cta:hover {
+  background: var(--color-accent-dim);
+}
+
+/* ── Footer ── */
+.footer {
+  text-align: center;
+  padding: 24px;
+  color: var(--color-fg-dim);
+  font-size: 0.72rem;
+  border-top: 1px solid var(--color-border-light);
+}
+
+/* ============================================================
+   Modal — Create Discussion
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  width: 90%;
+  max-width: 480px;
+  animation: slideUp 0.25s ease-out;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.modal__title {
+  font-family: var(--font-heading);
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.form-group {
+  margin-bottom: 18px;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-fg);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  transition: border-color 200ms ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.15);
+}
+
+.form-input::placeholder {
+  color: var(--color-fg-dim);
+}
+
+.form-range-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.form-range {
+  flex: 1;
+  accent-color: var(--color-accent);
+}
+
+.form-range-value {
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-accent);
+  min-width: 24px;
+}
+
+.form-hint {
+  font-size: 0.7rem;
+  color: var(--color-fg-dim);
+  margin-top: 4px;
+}
+
+.modal__actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 22px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-card);
+  color: var(--color-fg);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.btn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-fg-dim);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.btn--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #000;
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  background: var(--color-accent-dim);
+  border-color: var(--color-accent-dim);
+}
+
+.btn--primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--ghost {
+  background: none;
+  border-color: transparent;
+  color: var(--color-fg-muted);
+}
+
+.btn--ghost:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-light);
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 799px) {
+  .hero {
+    padding: 40px 16px 32px;
+  }
+  .hero__title {
+    font-size: 1.5rem;
+  }
+  .hero__stats {
+    gap: 20px;
+  }
+  .hero__stat-value {
+    font-size: 1.2rem;
+  }
+  .content {
+    padding: 0 12px 48px;
+  }
+  .card {
+    padding: 14px 16px;
+    flex-wrap: wrap;
+  }
+  .card__meta {
+    gap: 8px;
+  }
+  .topbar {
+    padding: 10px 12px;
+  }
+  .modal {
+    padding: 20px;
+    width: 95%;
+  }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ======== Topbar ======== -->
+  <header class="topbar">
+    <div class="topbar__brand">
+      <span class="topbar__brand-dot"></span>
+      AI Panel Studio
+    </div>
+    <nav class="topbar__nav">
+      <a class="topbar__nav-link topbar__nav-link--active" onclick="switchTab('live')">讨论广场</a>
+      <a class="topbar__nav-link" onclick="alert('关于 AI Panel Studio v1.0')">关于</a>
+    </nav>
+  </header>
+
+  <!-- ======== Hero ======== -->
+  <section class="hero">
+    <div class="hero__icon">🎙️</div>
+    <h1 class="hero__title">
+      观看 AI 专家的<span class="hero__title-accent">圆桌讨论</span>
+    </h1>
+    <p class="hero__subtitle">
+      输入任何话题，AI 自动生成主持人与专家阵容。观看一场去中心化、实时推进的深度圆桌讨论——共识与分歧实时呈现。
+    </p>
+    <button class="hero__cta" onclick="openCreateModal()">
+      <span>+</span> 发起新讨论
+    </button>
+    <div class="hero__stats">
+      <div class="hero__stat">
+        <div class="hero__stat-value" id="stat-live">3</div>
+        <div class="hero__stat-label">进行中</div>
+      </div>
+      <div class="hero__stat">
+        <div class="hero__stat-value" id="stat-total">27</div>
+        <div class="hero__stat-label">总讨论数</div>
+      </div>
+      <div class="hero__stat">
+        <div class="hero__stat-value" id="stat-utterances">1,842</div>
+        <div class="hero__stat-label">总发言条数</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======== Main Content ======== -->
+  <main class="content">
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab tab--active" id="tab-live" onclick="switchTab('live')">
+        进行中 <span style="color:var(--color-accent);margin-left:4px;">·</span>
+      </button>
+      <button class="tab" id="tab-ended" onclick="switchTab('ended')">
+        已结束
+      </button>
+    </div>
+
+    <!-- Live Discussions -->
+    <div id="live-section">
+      <div class="section-header">
+        <span class="section-header__title">
+          <span style="color:var(--color-accent);">●</span> 正在直播
+        </span>
+        <span class="section-header__count" id="live-count">3 场</span>
+      </div>
+
+      <div class="card-grid" id="live-list">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+    <!-- Ended Discussions (hidden initially) -->
+    <div id="ended-section" style="display:none;">
+      <div class="section-header">
+        <span class="section-header__title">
+          <span style="color:var(--color-fg-dim);">●</span> 讨论存档
+        </span>
+        <span class="section-header__count" id="ended-count">24 场</span>
+      </div>
+
+      <div class="card-grid" id="ended-list">
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ======== Footer ======== -->
+  <footer class="footer">
+    AI Panel Studio v1.0 · 基于 DeepSeek API · Agent-Mediator 架构
+  </footer>
+
+</div>
+
+<!-- ======== Create Modal ======== -->
+<div class="modal-overlay" id="create-modal" style="display:none;" onclick="closeModalOutside(event)">
+  <div class="modal" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+    <div class="modal__title" id="modal-title">发起新讨论</div>
+
+    <div class="form-group">
+      <label class="form-label" for="topic-input">讨论话题</label>
+      <input class="form-input" id="topic-input" type="text" placeholder="例如：AI是否应该具备自我意识？"
+             maxlength="200" oninput="updateTopicCount()">
+      <div class="form-hint" id="topic-count">0 / 200</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">专家人数</label>
+      <div class="form-range-group">
+        <input class="form-range" id="expert-count" type="range" min="2" max="8" value="4"
+               oninput="updateExpertCount()">
+        <span class="form-range-value" id="expert-count-display">4</span>
+      </div>
+      <div class="form-hint">2-8 位专家，默认 4 人。含 1 位主持人。</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">最大轮次（可选）</label>
+      <input class="form-input" id="max-rounds" type="number" min="0" max="99" value="0" placeholder="0 = 不限">
+      <div class="form-hint">达到最大轮次后自动结束。设为 0 则不限制。</div>
+    </div>
+
+    <div class="modal__actions">
+      <button class="btn btn--ghost" onclick="closeCreateModal()">取消</button>
+      <button class="btn btn--primary" id="btn-generate" onclick="createDiscussion()" disabled>
+        生成嘉宾阵容 →
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     Demo Data & Script
+     ============================================================ -->
+<script>
+// ── Demo Discussion Data ────────────────────────────────────
+const liveDiscussions = [
+  {
+    id: 'd1',
+    topic: 'AI是否应该具备自我意识？',
+    status: 'live',
+    currentRound: 3,
+    totalUtterances: 8,
+    createdAt: '2026-06-17 20:00',
+    panel: [
+      { name:'张明', role:'host',   color:'#6366F1', initials:'张' },
+      { name:'李研究员', role:'expert', color:'#EF4444', initials:'李' },
+      { name:'王博士',   role:'expert', color:'#3B82F6', initials:'王' },
+      { name:'陈女士',   role:'expert', color:'#F59E0B', initials:'陈' },
+      { name:'赵工程师', role:'expert', color:'#10B981', initials:'赵' },
+    ]
+  },
+  {
+    id: 'd2',
+    topic: '量子计算何时能改变普通人的生活？',
+    status: 'live',
+    currentRound: 5,
+    totalUtterances: 14,
+    createdAt: '2026-06-17 19:15',
+    panel: [
+      { name:'周教授', role:'host',   color:'#8B5CF6', initials:'周' },
+      { name:'刘博士', role:'expert', color:'#EC4899', initials:'刘' },
+      { name:'孙工程师', role:'expert', color:'#06B6D4', initials:'孙' },
+      { name:'吴研究员', role:'expert', color:'#F97316', initials:'吴' },
+    ]
+  },
+  {
+    id: 'd3',
+    topic: '远程办公是提升了还是降低了团队创造力？',
+    status: 'live',
+    currentRound: 1,
+    totalUtterances: 3,
+    createdAt: '2026-06-17 20:30',
+    panel: [
+      { name:'郑主持', role:'host',   color:'#14B8A6', initials:'郑' },
+      { name:'冯总监', role:'expert', color:'#E11D48', initials:'冯' },
+      { name:'褚博士', role:'expert', color:'#2563EB', initials:'褚' },
+      { name:'卫经理', role:'expert', color:'#EAB308', initials:'卫' },
+      { name:'蒋顾问', role:'expert', color:'#22C55E', initials:'蒋' },
+    ]
+  },
+];
+
+const endedDiscussions = [
+  {
+    id: 'd4',
+    topic: '开源模型 vs 闭源模型：未来谁会胜出？',
+    status: 'ended',
+    currentRound: 12,
+    totalUtterances: 31,
+    createdAt: '2026-06-16 15:30',
+    endedAt: '2026-06-16 16:10',
+    panel: [
+      { name:'黄教授', role:'host',   color:'#6366F1', initials:'黄' },
+      { name:'沈博士', role:'expert', color:'#EF4444', initials:'沈' },
+      { name:'韩工程师', role:'expert', color:'#3B82F6', initials:'韩' },
+      { name:'杨研究员', role:'expert', color:'#F59E0B', initials:'杨' },
+    ]
+  },
+  {
+    id: 'd5',
+    topic: '自动驾驶的道德困境应该如何编程解决？',
+    status: 'ended',
+    currentRound: 18,
+    totalUtterances: 47,
+    createdAt: '2026-06-16 10:00',
+    endedAt: '2026-06-16 11:25',
+    panel: [
+      { name:'朱教授', role:'host',   color:'#8B5CF6', initials:'朱' },
+      { name:'秦工程师', role:'expert', color:'#F97316', initials:'秦' },
+      { name:'许伦理师', role:'expert', color:'#EC4899', initials:'许' },
+      { name:'何博士', role:'expert', color:'#06B6D4', initials:'何' },
+    ]
+  },
+  {
+    id: 'd6',
+    topic: 'WebAssembly 能否取代 JavaScript 成为浏览器主导语言？',
+    status: 'ended',
+    currentRound: 8,
+    totalUtterances: 22,
+    createdAt: '2026-06-15 14:20',
+    endedAt: '2026-06-15 14:55',
+    panel: [
+      { name:'马教授', role:'host',   color:'#E11D48', initials:'马' },
+      { name:'苏工程师', role:'expert', color:'#2563EB', initials:'苏' },
+      { name:'罗架构师', role:'expert', color:'#10B981', initials:'罗' },
+    ]
+  },
+  {
+    id: 'd7',
+    topic: '人工智能是否应该拥有法律主体地位？',
+    status: 'ended',
+    currentRound: 15,
+    totalUtterances: 39,
+    createdAt: '2026-06-15 09:00',
+    endedAt: '2026-06-15 10:15',
+    panel: [
+      { name:'梁教授', role:'host',   color:'#14B8A6', initials:'梁' },
+      { name:'宋法律顾问', role:'expert', color:'#A855F7', initials:'宋' },
+      { name:'唐研究员', role:'expert', color:'#F59E0B', initials:'唐' },
+      { name:'曹伦理学家', role:'expert', color:'#EF4444', initials:'曹' },
+      { name:'曾工程师', role:'expert', color:'#3B82F6', initials:'曾' },
+    ]
+  },
+];
+
+// ── Render Functions ───────────────────────────────────────
+
+function renderCard(d) {
+  const isLive = d.status === 'live';
+  const panelDots = d.panel
+    .filter(p => p.role === 'expert')
+    .map(p => `<span class="panel-dot" style="background:${p.color}" title="${p.name}">${p.initials}</span>`)
+    .join('');
+
+  return `
+    <div class="card" tabindex="0" role="button" aria-label="${d.topic}"
+         onclick="navigateToDiscussion('${d.id}', '${d.status}')"
+         onkeydown="if(event.key==='Enter') navigateToDiscussion('${d.id}', '${d.status}')">
+      <div class="card__indicator card__indicator--${isLive ? 'live' : 'ended'}"></div>
+      <div class="card__body">
+        <div class="card__topic">${d.topic}</div>
+        <div class="card__meta">
+          <span class="card__meta-item">👥 ${d.panel.length - 1} 位专家</span>
+          <span class="card__meta-item">💬 ${d.totalUtterances} 条发言</span>
+          <span class="card__meta-item">🔄 第 ${d.currentRound} 轮</span>
+          <span class="card__meta-item">🕐 ${d.createdAt}</span>
+        </div>
+        <div class="card__panel-preview">
+          ${panelDots}
+        </div>
+      </div>
+      <span class="card__badge card__badge--${isLive ? 'live' : 'ended'}">
+        <span class="card__badge-dot ${isLive ? 'card__badge-dot--live' : ''}"></span>
+        ${isLive ? '直播中' : '已结束'}
+      </span>
+      <span class="card__chevron">→</span>
+    </div>`;
+}
+
+function renderLiveList() {
+  const container = document.getElementById('live-list');
+  if (liveDiscussions.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state__icon">📺</div>
+        <div class="empty-state__title">暂无进行中的讨论</div>
+        <div class="empty-state__text">发起一场新讨论，成为第一个话题的发起者</div>
+        <button class="empty-state__cta" onclick="openCreateModal()">
+          <span>+</span> 发起新讨论
+        </button>
+      </div>`;
+    return;
+  }
+  container.innerHTML = liveDiscussions.map(renderCard).join('');
+}
+
+function renderEndedList() {
+  const container = document.getElementById('ended-list');
+  if (endedDiscussions.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state__icon">📭</div>
+        <div class="empty-state__title">暂无已结束讨论</div>
+        <div class="empty-state__text">已结束的讨论总结报告将显示在此处</div>
+      </div>`;
+    return;
+  }
+  container.innerHTML = endedDiscussions.map(renderCard).join('');
+}
+
+// ── Tab Switching ──────────────────────────────────────────
+let currentTab = 'live';
+
+function switchTab(tab) {
+  currentTab = tab;
+  const liveSection = document.getElementById('live-section');
+  const endedSection = document.getElementById('ended-section');
+  const tabLive = document.getElementById('tab-live');
+  const tabEnded = document.getElementById('tab-ended');
+
+  if (tab === 'live') {
+    liveSection.style.display = '';
+    endedSection.style.display = 'none';
+    tabLive.classList.add('tab--active');
+    tabEnded.classList.remove('tab--active');
+  } else {
+    liveSection.style.display = 'none';
+    endedSection.style.display = '';
+    tabEnded.classList.add('tab--active');
+    tabLive.classList.remove('tab--active');
+  }
+}
+
+// ── Navigation ─────────────────────────────────────────────
+function navigateToDiscussion(id, status) {
+  if (status === 'live') {
+    alert(`🎬 进入演播厅\n讨论 ID: ${id}\n\n（原型跳转 → /studio/${id}）`);
+  } else {
+    alert(`📋 查看讨论报告\n讨论 ID: ${id}\n\n（原型跳转 → /report/${id}）`);
+  }
+}
+
+// ── Create Modal ───────────────────────────────────────────
+function openCreateModal() {
+  document.getElementById('create-modal').style.display = 'flex';
+  document.getElementById('topic-input').focus();
+}
+
+function closeCreateModal() {
+  document.getElementById('create-modal').style.display = 'none';
+  document.getElementById('topic-input').value = '';
+  document.getElementById('expert-count').value = 4;
+  document.getElementById('max-rounds').value = 0;
+  updateTopicCount();
+  updateExpertCount();
+}
+
+function closeModalOutside(e) {
+  if (e.target === document.getElementById('create-modal')) {
+    closeCreateModal();
+  }
+}
+
+function updateTopicCount() {
+  const input = document.getElementById('topic-input');
+  const count = document.getElementById('topic-count');
+  const btn = document.getElementById('btn-generate');
+  count.textContent = `${input.value.length} / 200`;
+  btn.disabled = input.value.trim().length === 0 || input.value.length > 200;
+
+  if (input.value.length > 200) {
+    count.style.color = 'var(--color-destructive)';
+  } else {
+    count.style.color = '';
+  }
+}
+
+function updateExpertCount() {
+  const val = document.getElementById('expert-count').value;
+  document.getElementById('expert-count-display').textContent = val;
+}
+
+function createDiscussion() {
+  const topic = document.getElementById('topic-input').value.trim();
+  const expertCount = parseInt(document.getElementById('expert-count').value);
+  const maxRounds = parseInt(document.getElementById('max-rounds').value) || null;
+
+  closeCreateModal();
+  alert(`✅ 讨论已创建！\n\n话题：${topic}\n专家人数：${expertCount}\n最大轮次：${maxRounds || '不限'}\n\n（原型跳转 → /create/new/panel）`);
+}
+
+// ── Keyboard shortcut ──────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeCreateModal();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+    e.preventDefault();
+    openCreateModal();
+  }
+});
+
+// ── Init ───────────────────────────────────────────────────
+renderLiveList();
+renderEndedList();
+document.getElementById('live-count').textContent = `${liveDiscussions.length} 场`;
+document.getElementById('ended-count').textContent = `${endedDiscussions.length} 场`;
+document.getElementById('stat-live').textContent = liveDiscussions.length;
+document.getElementById('stat-total').textContent = liveDiscussions.length + endedDiscussions.length;
+
+console.log('🏠 AI Panel Studio — 首页原型已就绪');
+console.log('   进行中讨论: ' + liveDiscussions.length + ' 场');
+console.log('   已结束讨论: ' + endedDiscussions.length + ' 场');
+console.log('   快捷键: Ctrl+N 发起新讨论 · Esc 关闭弹窗');
+</script>
+
+</body>
+</html>
