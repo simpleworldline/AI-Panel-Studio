@@ -94,6 +94,19 @@ export interface WsDiscussionControl {
   data: { action: string; message: string };
 }
 
+export interface WsInitialSnapshot {
+  type: 'initial_snapshot';
+  data: {
+    discussionId: string;
+    status: string;
+    currentRound: number;
+    totalUtterances: number;
+    transcript: any[];
+    consensus: any[];
+    disagreements: any[];
+  };
+}
+
 export type WsServerEvent =
   | WsExpertStatus
   | WsUtteranceToken
@@ -102,7 +115,8 @@ export type WsServerEvent =
   | WsDiscussionPaused
   | WsDiscussionResumed
   | WsDiscussionEnded
-  | WsDiscussionControl;
+  | WsDiscussionControl
+  | WsInitialSnapshot;
 
 // ── C→S 事件 ──
 

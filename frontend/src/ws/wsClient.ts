@@ -1,4 +1,5 @@
 import type { WsServerEvent, WsClientCommand } from '../types/ws';
+import { keysToSnake, keysToCamel } from '../utils/transform';
 
 type EventHandler = (event: WsServerEvent) => void;
 
@@ -26,7 +27,9 @@ export class StudioWebSocket {
     this.ws = new WebSocket(url);
     this.ws.onmessage = (ev) => {
       try {
-        const event = JSON.parse(ev.data) as WsServerEvent;
+        // snake_case → camelCase (后端 Python 输出 snake_case)
+        const raw = JSON.parse(ev.data);
+        const event = keysToCamel(raw) as WsServerEvent;
         this.handler(event);
       } catch {
         // ignore malformed messages
@@ -46,7 +49,8 @@ export class StudioWebSocket {
 
   send(command: WsClientCommand) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(command));
+      // camelCase → snake_case (发送到后端 Python)
+      this.ws.send(JSON.stringify(keysToSnake(command)));
     }
   }
 

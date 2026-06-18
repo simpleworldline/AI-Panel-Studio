@@ -11,23 +11,26 @@ import { ConsensusPanel } from '../components/ConsensusPanel';
 import { ControlBar } from '../components/ControlBar';
 import { Spinner } from '../components/ui/Spinner';
 import { Button } from '../components/ui/Button';
+import { pauseDiscussion, resumeDiscussion, advanceDiscussion, endDiscussion, fetchDiscussionDetail } from '../api/discussions';
 import type { WsServerEvent } from '../types/ws';
 
 export function StudioPage() {
   const { discussionId } = useParams<{ discussionId: string }>();
   const navigate = useNavigate();
   const { fetchDetail, detailLoading, detailError, currentDiscussion } = useDiscussionStore();
-  const store = useStudioStore();
   const addToast = useToastStore((s) => s.addToast);
   const wsRef = useRef<StudioWebSocket | null>(null);
 
   // Initialize
   useEffect(() => {
     if (!discussionId) return;
+    // 先清空上次讨论数据，避免跨页面污染导致闪白
+    useDiscussionStore.getState().clearCurrent();
+    useStudioStore.getState().reset();
     fetchDetail(discussionId);
     return () => {
       wsRef.current?.close();
-      store.reset();
+      useStudioStore.getState().reset();
     };
   }, [discussionId]);
 
@@ -42,19 +45,26 @@ export function StudioPage() {
     }
 
     const isCreator = currentDiscussion.creatorSessionId === getSessionId();
-    store.init(currentDiscussion, isCreator);
+    try {
+      useStudioStore.getState().init(currentDiscussion, isCreator);
+    } catch (err) {
+      console.error('StudioPage init failed:', err);
+      addToast({ type: 'error', message: '初始化讨论失败' });
+      return;
+    }
 
     // Connect WebSocket
     const eventHandler = (event: WsServerEvent) => {
+      const s = useStudioStore.getState();
       switch (event.type) {
         case 'expert_status':
-          store.handleExpertStatus(event.data);
+          s.handleExpertStatus(event.data);
           break;
         case 'utterance_token':
-          store.handleUtteranceToken(event.data);
+          s.handleUtteranceToken(event.data);
           break;
         case 'utterance_complete':
-          store.handleUtteranceComplete({
+          s.handleUtteranceComplete({
             id: event.data.utteranceId,
             panelMemberId: event.data.memberId,
             memberName: event.data.memberName,
@@ -68,27 +78,30 @@ export function StudioPage() {
           });
           break;
         case 'consensus_update':
-          store.handleConsensusUpdate(event.data);
+          s.handleConsensusUpdate(event.data);
           break;
         case 'discussion_paused':
-          store.handleDiscussionPaused();
+          s.handleDiscussionPaused();
           addToast({ type: 'info', message: '讨论已暂停' });
           break;
         case 'discussion_resumed':
-          store.handleDiscussionResumed();
+          s.handleDiscussionResumed();
           addToast({ type: 'info', message: '讨论已继续' });
           break;
         case 'discussion_ended':
-          store.handleDiscussionEnded();
+          s.handleDiscussionEnded();
           addToast({ type: 'info', message: '讨论已结束' });
           break;
         case 'discussion_control':
           addToast({ type: 'info', message: event.data.message });
           break;
+        case 'initial_snapshot':
+          s.handleInitialSnapshot(event.data);
+          break;
       }
     };
 
-    store.setWsStatus('connecting');
+    useStudioStore.getState().setWsStatus('connecting');
     const ws = new StudioWebSocket(discussionId, getSessionId(), eventHandler);
     wsRef.current = ws;
     ws.connect();
@@ -96,7 +109,7 @@ export function StudioPage() {
     // Check connection after 2s
     const checkTimer = setTimeout(() => {
       if (wsRef.current === ws) {
-        store.setWsStatus('connected');
+        useStudioStore.getState().setWsStatus('connected');
       }
     }, 2000);
 
@@ -106,12 +119,65 @@ export function StudioPage() {
     };
   }, [currentDiscussion, discussionId]);
 
-  // Controls
+  // ── REST 轮询兜底：每 3s 同步一次 transcript，确保 WS 断开时数据不丢失 ──
+  useEffect(() => {
+    if (!discussionId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetchDiscussionDetail(discussionId);
+        const detail = res.data;
+        if (detail.transcript && detail.transcript.length > 0) {
+          const s = useStudioStore.getState();
+          const existingIds = new Set(s.utterances.map(u => u.id));
+          const newUtterances = detail.transcript.filter(
+            (u: any) => !existingIds.has(u.id)
+          );
+          if (newUtterances.length > 0) {
+            s.handleInitialSnapshot({
+              transcript: [...s.utterances, ...newUtterances.map((u: any) => ({
+                id: u.id,
+                panelMemberId: u.panelMemberId || u.panel_member_id || '',
+                memberName: u.memberName || u.member_name || '',
+                memberTitle: u.memberTitle || u.member_title || '',
+                memberColor: u.memberColor || u.member_color || '',
+                content: u.content,
+                utteranceType: u.utteranceType || u.utterance_type || '',
+                sequenceNum: u.sequenceNum || u.sequence_num || 0,
+                roundNum: u.roundNum || u.round_num || 0,
+                createdAt: u.createdAt || u.created_at || '',
+              }))],
+              currentRound: detail.currentRound,
+              totalUtterances: detail.transcript.length,
+            });
+          }
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [discussionId]);
   const sendCommand = useCallback(
-    (type: 'advance' | 'pause' | 'resume' | 'end') => {
-      wsRef.current?.send({ type });
+    async (type: 'advance' | 'pause' | 'resume' | 'end') => {
+      if (!discussionId) return;
+      try {
+        if (type === 'pause') {
+          await pauseDiscussion(discussionId);
+          addToast({ type: 'info', message: '讨论已暂停' });
+        } else if (type === 'resume') {
+          await resumeDiscussion(discussionId);
+          addToast({ type: 'info', message: '讨论已继续' });
+        } else if (type === 'advance') {
+          await advanceDiscussion(discussionId);
+        } else if (type === 'end') {
+          await endDiscussion(discussionId);
+          addToast({ type: 'info', message: '讨论已结束' });
+        }
+      } catch {
+        addToast({ type: 'error', message: '操作失败，请重试' });
+      }
     },
-    [],
+    [discussionId, addToast],
   );
 
   // Loading state
@@ -135,7 +201,19 @@ export function StudioPage() {
     );
   }
 
-  const { status, currentRound, maxRounds, totalUtterances, isCreator, members, utterances, streaming, consensusItems, disagreementItems, expertStatuses, wsStatus } = store;
+  // 使用选择器 —— Zustand v4 必须精确订阅才能触发重渲染
+  const status = useStudioStore(s => s.status);
+  const currentRound = useStudioStore(s => s.currentRound);
+  const maxRounds = useStudioStore(s => s.maxRounds);
+  const totalUtterances = useStudioStore(s => s.totalUtterances);
+  const isCreator = useStudioStore(s => s.isCreator);
+  const members = useStudioStore(s => s.members);
+  const utterances = useStudioStore(s => s.utterances);
+  const streaming = useStudioStore(s => s.streaming);
+  const consensusItems = useStudioStore(s => s.consensusItems);
+  const disagreementItems = useStudioStore(s => s.disagreementItems);
+  const expertStatuses = useStudioStore(s => s.expertStatuses);
+  const wsStatus = useStudioStore(s => s.wsStatus);
 
   // Build combined consensus list (both consensus and disagreement)
   const allConsensus = [

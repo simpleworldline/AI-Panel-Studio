@@ -51,6 +51,8 @@ export function PanelSetupPage() {
   // Redirect after confirm success
   useEffect(() => {
     if (confirmPhase === 'success' && discussionId) {
+      // 跳转前清除 currentDiscussion，确保 StudioPage 重新加载最新数据
+      useDiscussionStore.getState().clearCurrent();
       navigate(`/studio/${discussionId}`);
     }
   }, [confirmPhase, discussionId, navigate]);

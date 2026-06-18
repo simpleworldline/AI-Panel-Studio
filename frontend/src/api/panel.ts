@@ -17,7 +17,7 @@ export async function generatePanel(discussionId: string, data: PanelGenerateReq
 
 // PUT /api/discussions/:id/panel
 export async function confirmPanel(discussionId: string, data: PanelConfirmRequest) {
-  return apiClient.post<any, ApiResponse<{ discussionId: string; panelConfirmed: boolean; members: PanelMember[] }>>(
+  return apiClient.put<any, ApiResponse<{ discussionId: string; panelConfirmed: boolean; members: PanelMember[] }>>(
     `/discussions/${discussionId}/panel`,
     data,
   );

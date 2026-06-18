@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getSessionId } from '../utils/session';
+import { keysToSnake, keysToCamel } from '../utils/transform';
 
 export const apiClient = axios.create({
   baseURL: '/api',
@@ -7,19 +8,28 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// 自动附加 Session ID
+// ── Request: Session ID + camelCase → snake_case ──
 apiClient.interceptors.request.use((config) => {
   config.headers['X-Session-Id'] = getSessionId();
+  if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
+    config.data = keysToSnake(config.data);
+  }
   return config;
 });
 
-// 统一响应解包
+// ── Response: snake_case → camelCase + 解包 ──
 apiClient.interceptors.response.use(
-  (res) => res.data,
+  (res) => {
+    if (res.data) {
+      res.data = keysToCamel(res.data);
+    }
+    return res.data;
+  },
   (err) => {
-    const message = err.response?.data?.message || '网络错误，请稍后重试';
-    const code = err.response?.data?.code || err.response?.status || 0;
-    const detail = err.response?.data?.detail || '';
+    const data = err.response?.data ? keysToCamel(err.response.data) : null;
+    const message = data?.message || '网络错误，请稍后重试';
+    const code = data?.code || err.response?.status || 0;
+    const detail = data?.detail || '';
     return Promise.reject({ message, code, detail });
   },
 );

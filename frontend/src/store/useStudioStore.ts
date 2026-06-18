@@ -231,6 +231,22 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
     });
   },
 
+  handleInitialSnapshot: (data: {
+    transcript?: UtteranceDisplay[];
+    consensus?: any[];
+    disagreements?: any[];
+    currentRound?: number;
+    totalUtterances?: number;
+  }) => {
+    set((s) => ({
+      utterances: data.transcript || s.utterances,
+      consensusItems: data.consensus || s.consensusItems,
+      disagreementItems: data.disagreements || s.disagreementItems,
+      currentRound: data.currentRound ?? s.currentRound,
+      totalUtterances: data.totalUtterances ?? s.totalUtterances,
+    }));
+  },
+
   handleDiscussionPaused: () => set({ status: 'paused' }),
   handleDiscussionResumed: () => set({ status: 'live' }),
   handleDiscussionEnded: () => {
