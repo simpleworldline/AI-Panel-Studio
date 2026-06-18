@@ -11,17 +11,20 @@ export function CreateDiscussionPage() {
   const [topic, setTopic] = useState('');
   const [expertCount, setExpertCount] = useState(4);
   const [maxRounds, setMaxRounds] = useState<number | null>(null);
+  const [customMax, setCustomMax] = useState<string>('');
+  const [useCustom, setUseCustom] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const topicLength = topic.length;
   const topicMax = 200;
   const isTopicValid = topicLength > 0 && topicLength <= topicMax;
+  const finalMaxRounds = useCustom ? (Number(customMax) || null) : maxRounds;
 
   const handleSubmit = async () => {
     if (!isTopicValid) return;
     setSubmitting(true);
     try {
-      const res = await createDiscussion({ topic, expertCount, maxRounds });
+      const res = await createDiscussion({ topic, expertCount, maxRounds: finalMaxRounds });
       addToast({ type: 'success', message: '讨论创建成功' });
       navigate(`/create/${res.data.id}/panel?count=${expertCount}`);
     } catch (e: any) {
@@ -75,23 +78,57 @@ export function CreateDiscussionPage() {
             </div>
           </div>
 
-          {/* max rounds */}
+          {/* max utterances */}
           <div>
             <label className="text-xs font-medium text-[var(--color-studio-fg-muted)] block mb-1.5">
-              最大轮次（可选）
+              发言上限（可选）
             </label>
-            <select
-              value={maxRounds ?? ''}
-              onChange={(e) => setMaxRounds(e.target.value ? Number(e.target.value) : null)}
-              className="w-full px-3 py-2 text-sm rounded-lg bg-[var(--color-studio-bg)]
-                border border-[var(--color-studio-border)] text-[var(--color-studio-fg)]
-                focus:border-[var(--color-studio-info)] outline-none cursor-pointer"
-            >
-              <option value="">不限制</option>
-              {[3, 5, 8, 10, 15, 20].map((n) => (
-                <option key={n} value={n}>{n} 轮</option>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {[
+                { val: null, label: '不限' },
+                { val: 5, label: '5 条' },
+                { val: 10, label: '10 条' },
+                { val: 15, label: '15 条' },
+                { val: 20, label: '20 条' },
+                { val: 30, label: '30 条' },
+              ].map(({ val, label }) => (
+                <button
+                  key={String(val)}
+                  onClick={() => { setMaxRounds(val); setUseCustom(false); }}
+                  className={`px-3 py-1.5 text-xs rounded-md border transition-all cursor-pointer
+                    ${!useCustom && maxRounds === val
+                      ? 'bg-[var(--color-studio-info)]/15 border-[var(--color-studio-info)] text-[var(--color-studio-info)]'
+                      : 'bg-[var(--color-studio-bg)] border-[var(--color-studio-border)] text-[var(--color-studio-fg-muted)] hover:border-[var(--color-studio-fg-subtle)]'
+                    }`}
+                >
+                  {label}
+                </button>
               ))}
-            </select>
+              <button
+                onClick={() => setUseCustom(true)}
+                className={`px-3 py-1.5 text-xs rounded-md border transition-all cursor-pointer
+                  ${useCustom
+                    ? 'bg-[var(--color-studio-info)]/15 border-[var(--color-studio-info)] text-[var(--color-studio-info)]'
+                    : 'bg-[var(--color-studio-bg)] border-[var(--color-studio-border)] text-[var(--color-studio-fg-muted)] hover:border-[var(--color-studio-fg-subtle)]'
+                  }`}
+              >
+                自定义
+              </button>
+            </div>
+            {useCustom && (
+              <input
+                type="number"
+                min={1}
+                max={99}
+                value={customMax}
+                onChange={(e) => setCustomMax(e.target.value)}
+                placeholder="输入发言条数上限"
+                className="w-full px-3 py-2 text-sm rounded-lg bg-[var(--color-studio-bg)]
+                  border border-[var(--color-studio-info)] text-[var(--color-studio-fg)]
+                  focus:ring-2 focus:ring-[var(--color-studio-info)]/20 outline-none
+                  placeholder:text-[var(--color-studio-fg-subtle)]"
+              />
+            )}
           </div>
 
           {/* submit */}
