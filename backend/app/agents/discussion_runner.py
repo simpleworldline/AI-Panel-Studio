@@ -1,9 +1,8 @@
-"""DiscussionRunner — 讨论运行引擎（生命周期 + Agent 编排 + 事件总线）
+"""DiscussionRunner — Agent-Mediator pattern with short-lived DB sessions.
 
-Agent-Mediator 模式：
-- 每个角色（Host/Expert/Observer）是独立 Agent
-- Scheduler 负责冲突仲裁（欲望值→时间→随机，主持人同分优先）
-- Runner 管理讨论生命周期并协调 WebSocket 广播
+Avoids SQLite write contention by opening/closing a session per round.
+pause/resume/end are signaled through Events, the runner acts on them
+inside its own session.
 """
 
 import asyncio
@@ -34,11 +33,11 @@ def _now() -> str:
 
 
 class DiscussionRunner:
-    """讨论运行引擎 — 管理讨论生命周期 + Agent 编排
+    """Discussion lifecycle engine.
 
-    每个 Running 讨论在内存中有一个 Runner 实例。
-    通过 asyncio.Event 实现 pause/resume 控制。
-    禁用机械轮替：每轮由 Scheduler 按欲望值选择发言者。
+    Each running discussion has one Runner instance in memory.
+    Uses short-lived DB sessions to avoid SQLite write contention.
+    Controlled by asyncio.Event for pause/resume/force-step/stop.
     """
 
     def __init__(self, discussion_id: str, ws_manager):
@@ -46,212 +45,167 @@ class DiscussionRunner:
         self.ws = ws_manager
         self.scheduler = Scheduler()
         self.observer = ObserverAgent()
+        # Control events
         self._paused = asyncio.Event()
-        self._paused.set()          # 初始为运行状态（set = 不阻塞 wait）
+        self._paused.set()                # initially running
         self._force_step = asyncio.Event()
-        self._force_step.clear()    # 无强制步骤
-        self._running = False
-        self._task: asyncio.Task | None = None  # 保持后台任务引用
+        self._force_step.clear()
+        self._stopped = asyncio.Event()
+        self._stopped.clear()
+        self._session_factory: async_sessionmaker | None = None
 
     async def run(self, session_factory: async_sessionmaker) -> bool:
-        """启动讨论主循环 — 后台任务，运行直到讨论结束或被停止"""
-        self._running = True
-        self._paused.set()
-        logger.info(f"[{self.discussion_id[:8]}] DiscussionRunner started")
+        """Main discussion loop (runs as background task)."""
+        self._session_factory = session_factory
+
+        # Retry until discussion status=live (start endpoint may not have committed yet)
+        for _ in range(5):
+            async with session_factory() as db:
+                d = await db.get(Discussion, self.discussion_id)
+                if d and d.status == "live":
+                    break
+            await asyncio.sleep(0.5)
+        else:
+            logger.warning(f"[{self.discussion_id[:8]}] status never became live, giving up")
+            return False
 
         try:
+            # === 1. Opening statement ===
             async with session_factory() as db:
-                # 注意：SQLAlchemy async session 内所有操作必须在同一 async with 块内
-                # 不能通过 await db.refresh() 访问 lazy-loaded relationship
-                d = await db.get(Discussion, self.discussion_id)
-                if d is None or d.status != "live":
-                    logger.warning(f"[{self.discussion_id[:8]}] Discussion not found or not live")
+                d, host, experts = await self._init_round(db)
+                if d is None or host is None:
                     return False
 
-                # === 加载数据（全部在此 session 内） ===
-                host, experts = await self._load_agents(db)
-                if host is None:
-                    logger.error(f"[{self.discussion_id[:8]}] No host found")
-                    return False
+                opening = await self._agent_speak(db, host, [], d.topic, "opening", 0)
+                if opening:
+                    await db.commit()
 
-                # === 1. 开场白 ===
-                await self._broadcast_expert_status(host, "preparing", db)
-                await self._broadcast_expert_status(host, "speaking", db)
+            # === 2. Main loop ===
+            transcript = [opening] if opening else []
+            round_count = 0
 
-                opening_text = ""
-                async for token in host.generate_utterance([], d.topic):
-                    opening_text += token
-                    await self.ws.broadcast(self.discussion_id, {
-                        "type": "utterance_token",
-                        "data": {
-                            "utterance_id": ":opening:", "member_id": host.member_id,
-                            "member_name": host.name, "member_title": host.title,
-                            "member_color": host.color, "token": token,
-                            "sequence_num": 0, "round_num": 0,
-                            "is_first": (opening_text == token), "is_last": False,
-                        },
-                    })
+            while not self._stopped.is_set() and round_count < 100:
+                # If paused, wait for resume or force_step (DB already updated by REST)
+                if not self._paused.is_set():
+                    await asyncio.wait(
+                        [asyncio.create_task(self._paused.wait()),
+                         asyncio.create_task(self._force_step.wait())],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    self._force_step.clear()
+                    continue
 
-                if opening_text:
-                    u = await self._save_utterance(db, host, opening_text, "opening", 0)
-                    await self.ws.broadcast(self.discussion_id, {
-                        "type": "utterance_complete",
-                        "data": self._format_utterance(u, host),
-                    })
-                await self._broadcast_expert_status(host, "idle", db)
-                await db.commit()
-                logger.info(f"[{self.discussion_id[:8]}] Opening done ({len(opening_text)} chars)")
+                self._force_step.clear()
 
-                # === 2. 主发言循环 ===
-                round_count = 0
-                while self._running and round_count < 100:  # 安全上限
-                    # 等待：要么非暂停状态，要么有强制步骤
-                    await self._wait_for_go()
+                if self._stopped.is_set():
+                    break
 
-                    # 检查外部状态变更
-                    await db.refresh(d)
-                    if d.status not in ("live",):
+                async with session_factory() as db:
+                    # Refresh state
+                    d2 = await db.get(Discussion, self.discussion_id)
+                    if d2 is None or d2.status not in ("live",):
                         break
 
-                    # 结束条件
-                    if d.max_rounds and d.current_round >= d.max_rounds:
-                        logger.info(f"[{self.discussion_id[:8]}] Max rounds reached ({d.max_rounds})")
-                        await self._end_discussion(db, d, host, "max_rounds")
+                    # Reload agents (they're stateless enough to recreate)
+                    _, host, experts = await self._init_round(db)
+                    if host is None:
                         break
 
-                    # 加载最新 transcript
+                    # Reload transcript
                     transcript = await self._load_transcript(db)
-                    all_agents: list = [host] + experts
 
-                    # 各 Agent 计算发言欲望值
+                    # End conditions
+                    if d2.status == "ended":
+                        break
+                    if d2.max_rounds and d2.current_round >= d2.max_rounds:
+                        await self._end_discussion(db, d2, host, "max_rounds")
+                        break
+
+                    all_agents = [host] + experts
+
+                    # Each agent calculates desire + broadcasts status
                     for agent in all_agents:
-                        await agent.prepare(transcript, d.topic)
-                        await self._broadcast_expert_status(agent, "preparing", db)
+                        agent._desire = await agent.calculate_desire(transcript, d2.topic)
+                        await self._broadcast(db, agent, "preparing")
 
-                    # Scheduler 选出发言者（欲望值→时间→随机，主持人同分优先）
+                    # Scheduler picks speaker
                     speaker = await self.scheduler.select_speaker(all_agents)
                     if speaker is None:
-                        # 无 Agent 欲望值达到阈值，广播 idle 状态后等待
                         for a in all_agents:
-                            await self._broadcast_expert_status(a, "idle", db)
-                        # 短暂等待（force_step 或 resume 会立即唤醒）
-                        done, pending = await asyncio.wait(
-                            [asyncio.create_task(self._paused.wait()),
-                             asyncio.create_task(self._force_step.wait())],
-                            timeout=2.0
-                        )
-                        for t in pending:
-                            t.cancel()
+                            await self._broadcast(db, a, "idle")
+                        await db.commit()
+                        await asyncio.sleep(1)
                         continue
 
-                    # 生成发言（流式推送）
-                    await self._broadcast_expert_status(speaker, "speaking", db)
-                    accumulated = ""
-                    utterance_id = str(uuid.uuid4())
-                    next_seq = len(transcript) + 1
-                    new_round = d.current_round + 1
-
-                    async for token in speaker.generate_utterance(transcript, d.topic):
-                        accumulated += token
-                        await self.ws.broadcast(self.discussion_id, {
-                            "type": "utterance_token",
-                            "data": {
-                                "utterance_id": utterance_id, "member_id": speaker.member_id,
-                                "member_name": speaker.name, "member_title": speaker.title,
-                                "member_color": speaker.color, "token": token,
-                                "sequence_num": next_seq, "round_num": new_round,
-                                "is_first": (accumulated == token), "is_last": False,
-                            },
-                        })
-
-                    if accumulated:
-                        u = await self._save_utterance(db, speaker, accumulated, "statement", new_round)
-                        await self.ws.broadcast(self.discussion_id, {
-                            "type": "utterance_complete",
-                            "data": self._format_utterance(u, speaker),
-                        })
+                    # Speak
+                    utterance = await self._agent_speak(
+                        db, speaker, transcript, d2.topic,
+                        "statement", d2.current_round + 1,
+                    )
+                    if utterance:
                         speaker.mark_spoke()
-                        logger.info(f"[{self.discussion_id[:8]}] Round {new_round}: {speaker.name} spoke ({len(accumulated)} chars)")
+                        for a in all_agents:
+                            if a != speaker:
+                                a.mark_silent()
 
-                    # 其他 Agent 标记本轮沉默
-                    for a in all_agents:
-                        if a != speaker:
-                            a.mark_silent()
-
-                    await self._broadcast_expert_status(speaker, "idle", db)
-
-                    # === 3. Observer 分析共识/分歧 ===
-                    latest = self._format_utterance(u, speaker) if accumulated else None
-                    if latest:
+                        # Observer analysis
+                        latest = self._fmt_utterance(utterance, speaker)
                         existing = await self._load_consensus(db)
                         analysis = await self.observer.analyze(transcript, latest, existing)
                         if analysis:
                             await self._save_consensus(db, analysis)
-                            await self.ws.broadcast(self.discussion_id, {
-                                "type": "consensus_update",
-                                "data": analysis,
+                            await self._broadcast_raw({
+                                "type": "consensus_update", "data": analysis,
                             })
-                            logger.info(f"[{self.discussion_id[:8]}] Consensus: {analysis.get('action', 'none')}")
+                            logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')}")
 
-                    # 轮次递增
-                    d.current_round += 1
+                        transcript.append(self._fmt_utterance(utterance, speaker))
+
+                    await self._broadcast(db, speaker, "idle")
+                    d2.current_round += 1
                     round_count += 1
-                    self._force_step.clear()  # 本轮完成，清除强制标记
                     await db.commit()
 
-            # 如果 while 循环正常结束（非 stop 触发），调用结束流程
-            if self._running:
-                await self._end_discussion_with_db(d, host)
+            # === 3. End ===
+            async with session_factory() as db:
+                d3 = await db.get(Discussion, self.discussion_id)
+                if d3 and d3.status not in ("ended",):
+                    _, host, _ = await self._init_round(db)
+                    if host:
+                        await self._end_discussion(db, d3, host, "host_decided")
 
         except Exception as e:
-            logger.exception(f"[{self.discussion_id[:8]}] Runner crashed: {e}")
+            logger.exception(f"[{self.discussion_id[:8]}] crashed: {e}")
         finally:
-            self._running = False
-            logger.info(f"[{self.discussion_id[:8]}] DiscussionRunner stopped")
-
+            self._stopped.set()
+            logger.info(f"[{self.discussion_id[:8]}] stopped")
         return True
 
-    async def pause(self):
-        """暂停发言循环"""
+    # ─── Public control API ───
+    def pause(self):
         self._paused.clear()
 
-    async def resume(self):
-        """继续发言循环"""
+    def resume(self):
         self._paused.set()
 
-    async def force_step(self):
-        """强制执行一轮发言（无论是否暂停）"""
+    def force_step(self):
         self._force_step.set()
 
-    async def stop(self):
-        """停止 Runner"""
-        self._running = False
-        self._paused.set()      # 解除 wait 阻塞
-        self._force_step.set()  # 解除 force_step 阻塞
+    def stop(self):
+        self._stopped.set()
+        self._paused.set()
+        self._force_step.set()
 
     def is_running(self) -> bool:
-        return self._running
+        return not self._stopped.is_set()
 
-    async def _wait_for_go(self):
-        """等待运行信号：正常流程(paused event)或手动强制(force_step event)"""
-        # 如果没暂停，直接放行
-        if self._paused.is_set():
-            return
-        # 等待 paused 或 force_step 任一触发
-        done, pending = await asyncio.wait(
-            [asyncio.create_task(self._paused.wait()),
-             asyncio.create_task(self._force_step.wait())],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        for t in pending:
-            t.cancel()
+    # ─── Internal helpers ───
 
-    # ──────────────────────────────────────────────
-    # Internal helpers (all must run within session)
-    # ──────────────────────────────────────────────
-
-    async def _load_agents(self, db: AsyncSession):
-        """从 DB 加载主持人 + 专家 Agent"""
+    async def _init_round(self, db: AsyncSession):
+        """Load discussion + agents within current session."""
+        d = await db.get(Discussion, self.discussion_id)
+        if d is None:
+            return None, None, None
         result = await db.execute(
             select(PanelMember)
             .where(PanelMember.discussion_id == self.discussion_id)
@@ -264,10 +218,98 @@ class DiscussionRunner:
                 host = HostAgent(m.id, m.name, m.title, m.stance, m.color)
             else:
                 experts.append(ExpertAgent(m.id, m.name, m.title, m.stance, m.color))
-        return host, experts
+        return d, host, experts
 
-    async def _broadcast_expert_status(self, agent, status: str, db: AsyncSession):
-        """广播专家状态 + 写入 DB 日志"""
+    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype, round_num) -> dict | None:
+        """Stream agent utterance → WS + DB, return formatted dict or None."""
+        await self._broadcast(db, agent, "speaking")
+        text = ""
+        async for token in agent.generate_utterance(transcript, topic):
+            text += token
+            await self._broadcast_raw({
+                "type": "utterance_token",
+                "data": {
+                    "utterance_id": f":{utype}:", "member_id": agent.member_id,
+                    "member_name": agent.name, "member_title": agent.title,
+                    "member_color": agent.color, "token": token,
+                    "sequence_num": len(transcript) + 1, "round_num": round_num,
+                    "is_first": (text == token), "is_last": False,
+                },
+            })
+        if not text:
+            return None
+        # Save in DB
+        seq_result = await db.execute(
+            select(func.max(Utterance.sequence_num)).where(
+                Utterance.discussion_id == self.discussion_id
+            )
+        )
+        max_seq = seq_result.scalar() or 0
+        u = Utterance(
+            id=str(uuid.uuid4()), discussion_id=self.discussion_id,
+            panel_member_id=agent.member_id, content=text,
+            utterance_type=utype, round_num=round_num, sequence_num=max_seq + 1,
+        )
+        db.add(u)
+        await db.flush()
+        await db.refresh(u)
+        await self._broadcast_raw({
+            "type": "utterance_complete",
+            "data": self._fmt_utterance(u, agent),
+        })
+        logger.info(f"[{self.discussion_id[:8]}] {agent.name}({utype}): {text[:60]}...")
+        return self._fmt_utterance(u, agent)
+
+    async def _end_discussion(self, db: AsyncSession, d, host, reason: str):
+        """Generate host summary, mark ended, broadcast."""
+        transcript = await self._load_transcript(db)
+        # Summary
+        summary = ""
+        async for token in host.generate_summary(transcript, d.topic):
+            summary += token
+            await self._broadcast_raw({
+                "type": "utterance_token",
+                "data": {
+                    "utterance_id": ":summary:", "member_id": host.member_id,
+                    "member_name": host.name, "member_title": host.title,
+                    "member_color": host.color, "token": token,
+                    "sequence_num": len(transcript) + 1, "round_num": d.current_round + 1,
+                    "is_first": (summary == token), "is_last": False,
+                },
+            })
+        if summary:
+            u = Utterance(id=str(uuid.uuid4()), discussion_id=self.discussion_id,
+                         panel_member_id=host.member_id, content=summary,
+                         utterance_type="summary", round_num=d.current_round + 1,
+                         sequence_num=len(transcript) + 1)
+            db.add(u)
+            await db.flush()
+            await self._broadcast_raw({
+                "type": "utterance_complete",
+                "data": self._fmt_utterance(u, host),
+            })
+
+        d.status = "ended"
+        d.ended_at = _now()
+        await db.commit()
+
+        total = await db.execute(
+            select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
+        )
+        total_utterances = total.scalar() or 0
+
+        await self._broadcast_raw({
+            "type": "discussion_ended",
+            "data": {
+                "discussion_id": self.discussion_id, "end_reason": reason,
+                "total_rounds": d.current_round, "total_utterances": total_utterances,
+                "ended_at": d.ended_at,
+            },
+        })
+        logger.info(f"[{self.discussion_id[:8]}] ended: {reason}")
+
+    async def _broadcast(self, db: AsyncSession, agent, status: str):
+        """Broadcast expert status + save log."""
         log = ExpertStatusLog(
             id=str(uuid.uuid4()), discussion_id=self.discussion_id,
             panel_member_id=agent.member_id, status=status,
@@ -275,7 +317,7 @@ class DiscussionRunner:
         )
         db.add(log)
         await db.flush()
-        await self.ws.broadcast(self.discussion_id, {
+        await self._broadcast_raw({
             "type": "expert_status",
             "data": {
                 "member_id": agent.member_id, "member_name": agent.name,
@@ -286,44 +328,32 @@ class DiscussionRunner:
             },
         })
 
-    async def _save_utterance(self, db: AsyncSession, agent, content: str, utype: str, round_num: int) -> Utterance:
-        seq_result = await db.execute(
-            select(func.max(Utterance.sequence_num)).where(
-                Utterance.discussion_id == self.discussion_id
-            )
-        )
-        max_seq = seq_result.scalar() or 0
-        u = Utterance(
-            id=str(uuid.uuid4()), discussion_id=self.discussion_id,
-            panel_member_id=agent.member_id, content=content,
-            utterance_type=utype, round_num=round_num, sequence_num=max_seq + 1,
-        )
-        db.add(u)
-        await db.flush()
-        await db.refresh(u)
-        return u
+    async def _broadcast_raw(self, event: dict):
+        """Send event to all connected WS clients."""
+        try:
+            await self.ws.broadcast(self.discussion_id, event)
+        except Exception:
+            pass
 
     async def _load_transcript(self, db: AsyncSession) -> list[dict]:
-        """从 DB 加载当前讨论的完整 transcript（含发言人信息）"""
+        """Load transcript with member names."""
         result = await db.execute(
             select(Utterance)
             .where(Utterance.discussion_id == self.discussion_id)
             .order_by(Utterance.sequence_num)
         )
         utterances = result.scalars().all()
-        # 批量加载 PanelMember 避免 N+1
         member_ids = {u.panel_member_id for u in utterances}
-        members_map = {}
+        member_map = {}
         if member_ids:
-            member_result = await db.execute(
+            m_result = await db.execute(
                 select(PanelMember).where(PanelMember.id.in_(member_ids))
             )
-            for m in member_result.scalars().all():
-                members_map[m.id] = m
-
+            for m in m_result.scalars().all():
+                member_map[m.id] = m
         transcript = []
         for u in utterances:
-            m = members_map.get(u.panel_member_id)
+            m = member_map.get(u.panel_member_id)
             transcript.append({
                 "id": u.id, "panel_member_id": u.panel_member_id,
                 "member_name": m.name if m else "Unknown",
@@ -341,22 +371,17 @@ class DiscussionRunner:
                 ConsensusDisagreement.discussion_id == self.discussion_id
             )
         )
-        items = result.scalars().all()
         return [
-            {
-                "id": c.id, "type": c.type, "title": c.title,
-                "description": c.description,
-                "source_utterance_ids": c.source_utterance_ids,
-                "confidence": c.confidence, "is_resolved": bool(c.is_resolved),
-                "round_num": c.round_num,
-            }
-            for c in items
+            {"id": c.id, "type": c.type, "title": c.title,
+             "description": c.description, "source_utterance_ids": c.source_utterance_ids,
+             "confidence": c.confidence, "is_resolved": bool(c.is_resolved),
+             "round_num": c.round_num}
+            for c in result.scalars().all()
         ]
 
     async def _save_consensus(self, db: AsyncSession, analysis: dict):
         cd = ConsensusDisagreement(
-            id=str(uuid.uuid4()),
-            discussion_id=self.discussion_id,
+            id=str(uuid.uuid4()), discussion_id=self.discussion_id,
             type=analysis.get("type", "consensus"),
             title=analysis.get("title", ""),
             description=analysis.get("description", ""),
@@ -368,83 +393,12 @@ class DiscussionRunner:
         db.add(cd)
         await db.flush()
 
-    def _format_utterance(self, u: Utterance, agent=None) -> dict:
-        """Format Utterance ORM object into WS event dict"""
+    def _fmt_utterance(self, u, agent) -> dict:
         return {
-            "utterance_id": u.id,
-            "member_id": u.panel_member_id,
-            "member_name": agent.name if agent else "",
-            "member_title": agent.title if agent else "",
-            "member_color": agent.color if agent else "",
-            "content": u.content,
+            "utterance_id": u.id, "member_id": u.panel_member_id,
+            "member_name": agent.name, "member_title": agent.title,
+            "member_color": agent.color, "content": u.content,
             "utterance_type": u.utterance_type,
-            "sequence_num": u.sequence_num,
-            "round_num": u.round_num,
+            "sequence_num": u.sequence_num, "round_num": u.round_num,
             "created_at": u.created_at,
         }
-
-    async def _end_discussion(self, db: AsyncSession, d: Discussion, host: HostAgent, reason: str):
-        """结束讨论：生成主持人总结 + 广播"""
-        transcript = await self._load_transcript(db)
-
-        # 主持人总结
-        summary_text = ""
-        async for token in host.generate_summary(transcript, d.topic):
-            summary_text += token
-            await self.ws.broadcast(self.discussion_id, {
-                "type": "utterance_token",
-                "data": {
-                    "utterance_id": ":summary:", "member_id": host.member_id,
-                    "member_name": host.name, "member_title": host.title,
-                    "member_color": host.color, "token": token,
-                    "sequence_num": len(transcript) + 1, "round_num": d.current_round + 1,
-                    "is_first": (summary_text == token), "is_last": False,
-                },
-            })
-
-        if summary_text:
-            u = await self._save_utterance(db, host, summary_text, "summary", d.current_round + 1)
-            await self.ws.broadcast(self.discussion_id, {
-                "type": "utterance_complete",
-                "data": self._format_utterance(u, host),
-            })
-
-        d.status = "ended"
-        d.ended_at = _now()
-        await db.commit()
-
-        count_result = await db.execute(
-            select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
-        )
-        total = count_result.scalar() or 0
-
-        await self.ws.broadcast(self.discussion_id, {
-            "type": "discussion_ended",
-            "data": {
-                "discussion_id": self.discussion_id, "end_reason": reason,
-                "total_rounds": d.current_round, "total_utterances": total,
-                "ended_at": d.ended_at,
-            },
-        })
-
-        self._running = False
-        logger.info(f"[{self.discussion_id[:8]}] Discussion ended: {reason}")
-
-    async def _end_discussion_with_db(self, d, host):
-        """在已有 session 外部调用 end 的 fallback（runner 无 session 时）"""
-        from app.db.database import async_session_factory
-        async with async_session_factory() as db:
-            d2 = await db.get(Discussion, self.discussion_id)
-            if d2:
-                d2.status = "ended"
-                d2.ended_at = _now()
-                await db.commit()
-        await self.ws.broadcast(self.discussion_id, {
-            "type": "discussion_ended",
-            "data": {
-                "discussion_id": self.discussion_id, "end_reason": "host_decided",
-                "total_rounds": d.current_round if d else 0,
-                "total_utterances": 0, "ended_at": _now(),
-            },
-        })
-        self._running = False

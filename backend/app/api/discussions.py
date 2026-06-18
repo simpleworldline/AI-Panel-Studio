@@ -1,8 +1,9 @@
 """API_CONTRACT.md §2.1, §2.3 — Discussion management endpoints"""
 
 import asyncio
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -13,6 +14,10 @@ from app.services.discussion_service import DiscussionService, PermissionError, 
 from app.services.report_service import ReportService
 from app.services.runner_registry import runner_registry
 from app.api.ws import manager as ws_manager
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 router = APIRouter(prefix="/api/discussions", tags=["discussions"])
 
@@ -75,7 +80,7 @@ async def start_discussion(
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Launch DiscussionRunner as background task (keep reference to prevent GC)
+    # Launch runner (it will retry if status not yet committed)
     if not runner_registry.is_running(discussion_id):
         runner = runner_registry.create_runner(discussion_id, ws_manager)
         task = asyncio.create_task(runner.run(async_session_factory))
@@ -92,17 +97,18 @@ async def pause_discussion(
 ):
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
-        result = await DiscussionService.pause(db, discussion_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+    await DiscussionService.check_permission(db, discussion_id, x_session_id)
+    try:
+        result = await DiscussionService.pause(db, discussion_id)  # writes status to DB
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Signal runner to pause
     runner = runner_registry.get(discussion_id)
     if runner:
-        asyncio.create_task(runner.pause())
-
+        runner.pause()  # signal runner event
     return ApiResponse(code=200, data=result, message="讨论已暂停")
 
 
@@ -114,17 +120,18 @@ async def resume_discussion(
 ):
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
-        result = await DiscussionService.resume(db, discussion_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+    await DiscussionService.check_permission(db, discussion_id, x_session_id)
+    try:
+        result = await DiscussionService.resume(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Signal runner to resume
     runner = runner_registry.get(discussion_id)
     if runner:
-        asyncio.create_task(runner.resume())
-
+        runner.resume()
     return ApiResponse(code=200, data=result, message="讨论已继续")
 
 
@@ -142,10 +149,16 @@ async def next_round(
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Force advance: trigger one round iteration immediately
+    # Launch or trigger Runner
     runner = runner_registry.get(discussion_id)
-    if runner:
-        asyncio.create_task(runner.force_step())
+    if not runner:
+        runner = runner_registry.create_runner(discussion_id, ws_manager)
+        task = asyncio.create_task(runner.run(async_session_factory))
+        runner_registry.set_task(discussion_id, task)
+        # Give runner a moment to start (status=live is already committed)
+        await asyncio.sleep(0.3)
+    else:
+        runner.force_step()
 
     return ApiResponse(code=200, data=result, message="已触发下一轮发言")
 
@@ -158,16 +171,18 @@ async def end_discussion(
 ):
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
-        result = await DiscussionService.end(db, discussion_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+    await DiscussionService.check_permission(db, discussion_id, x_session_id)
+    try:
+        result = await DiscussionService.end(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Stop runner
     runner = runner_registry.get(discussion_id)
     if runner:
-        await runner.stop()
+        runner.stop()
 
     return ApiResponse(code=200, data=result, message="讨论已结束")
 

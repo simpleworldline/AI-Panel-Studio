@@ -160,48 +160,31 @@ async def ws_discussion(
 
             if event_type == "advance":
                 if runner:
-                    asyncio.create_task(runner.force_step())
+                    runner.force_step()
                 await manager.broadcast(discussion_id, {
                     "type": "discussion_control",
                     "data": {"action": "advance", "discussionId": discussion_id},
                 })
 
             elif event_type == "pause":
-                # Update DB state
-                async with async_session_factory() as db2:
-                    d2 = await db2.get(Discussion, discussion_id)
-                    if d2:
-                        d2.status = "paused"
-                        await db2.commit()
                 if runner:
-                    asyncio.create_task(runner.pause())
+                    runner.pause()
                 await manager.broadcast(discussion_id, {
                     "type": "discussion_paused",
                     "data": {"discussionId": discussion_id, "timestamp": _now()},
                 })
 
             elif event_type == "resume":
-                async with async_session_factory() as db3:
-                    d3 = await db3.get(Discussion, discussion_id)
-                    if d3:
-                        d3.status = "live"
-                        await db3.commit()
                 if runner:
-                    asyncio.create_task(runner.resume())
+                    runner.resume()
                 await manager.broadcast(discussion_id, {
                     "type": "discussion_resumed",
                     "data": {"discussionId": discussion_id, "timestamp": _now()},
                 })
 
             elif event_type == "end":
-                async with async_session_factory() as db4:
-                    d4 = await db4.get(Discussion, discussion_id)
-                    if d4:
-                        d4.status = "ended"
-                        d4.ended_at = _now()
-                        await db4.commit()
                 if runner:
-                    await runner.stop()
+                    runner.stop()
                 await manager.broadcast(discussion_id, {
                     "type": "discussion_ended",
                     "data": {
