@@ -35,12 +35,16 @@ class PanelService:
             "color": "#6366F1",
             "avatar_prompt": None,
         }
-        # Default mock experts
+        # Default mock experts (8 templates to cover 2-8 range)
         expert_templates = [
             {"name": "李研究员", "title": "认知科学研究所高级研究员", "stance": "支持AI具备有限自我意识"},
             {"name": "王教授", "title": "计算机科学教授", "stance": "反对赋予AI自我意识，存在安全风险"},
             {"name": "陈博士", "title": "神经科学博士", "stance": "从生物学角度比较人类与AI意识"},
             {"name": "赵工程师", "title": "AI产品经理", "stance": "从产品实用角度讨论"},
+            {"name": "孙教授", "title": "哲学系教授", "stance": "从伦理学视角审视AI意识问题"},
+            {"name": "周博士", "title": "AI安全研究员", "stance": "关注AI自我意识带来的安全与监管"},
+            {"name": "吴分析师", "title": "科技政策分析师", "stance": "从政策与法律角度评估AI意识的影响"},
+            {"name": "郑主编", "title": "科技媒体主编", "stance": "从公众认知与科学传播角度参与讨论"},
         ]
         experts = []
         for i in range(min(d.expert_count, len(expert_templates))):
@@ -64,7 +68,14 @@ class PanelService:
         d = await session.get(Discussion, discussion_id)
         if d is None:
             raise ValueError("讨论不存在")
-        if d.status != "pending":
+
+        # 检查是否已确认过（已有主持人则视为已确认）
+        existing_host = await session.execute(
+            select(PanelMember).where(
+                PanelMember.discussion_id == discussion_id, PanelMember.role == "host"
+            )
+        )
+        if existing_host.scalar_one_or_none() is not None:
             raise ValueError("阵容已确认不可修改")
 
         # 清除旧阵容
