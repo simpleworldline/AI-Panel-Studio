@@ -207,11 +207,26 @@ class DiscussionRunner:
                             latest = utterance
                             analysis = await self.observer.analyze(transcript, latest, existing)
                             if analysis:
-                                await self._save_consensus(db, analysis)
+                                consensus_db = await self._save_consensus(db, analysis)
+                                # Wrap observer output into {action, record} format
+                                record_for_ws = {
+                                    "id": consensus_db.id,
+                                    "type": analysis.get("type", "consensus"),
+                                    "title": analysis.get("title", ""),
+                                    "description": analysis.get("description", ""),
+                                    "source_utterance_ids": json.loads(consensus_db.source_utterance_ids) if consensus_db.source_utterance_ids else [],
+                                    "confidence": analysis.get("confidence", 0.5),
+                                    "is_resolved": bool(consensus_db.is_resolved),
+                                    "round_num": analysis.get("round_num", 0),
+                                }
                                 await self._broadcast_raw({
-                                    "type": "consensus_update", "data": analysis,
+                                    "type": "consensus_update",
+                                    "data": {
+                                        "action": analysis.get("action", "created"),
+                                        "record": record_for_ws,
+                                    },
                                 })
-                                logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')}")
+                                logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')} {analysis.get('title','')}")
 
                             step_in_round += 1
 
@@ -440,7 +455,7 @@ class DiscussionRunner:
             for c in result.scalars().all()
         ]
 
-    async def _save_consensus(self, db: AsyncSession, analysis: dict):
+    async def _save_consensus(self, db: AsyncSession, analysis: dict) -> ConsensusDisagreement:
         cd = ConsensusDisagreement(
             id=str(uuid.uuid4()), discussion_id=self.discussion_id,
             type=analysis.get("type", "consensus"),
@@ -453,6 +468,7 @@ class DiscussionRunner:
         )
         db.add(cd)
         await db.flush()
+        return cd
 
     def _fmt_utterance(self, u, agent) -> dict:
         return {
