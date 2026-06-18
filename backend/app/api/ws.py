@@ -95,6 +95,34 @@ async def send_initial_snapshot(ws: WebSocket, discussion_id: str):
             for u in utterances
         ]
 
+        # Consensus & Disagreements
+        from app.models.consensus import ConsensusDisagreement
+        import json as jsonlib
+        cd_result = await db.execute(
+            select(ConsensusDisagreement)
+            .where(ConsensusDisagreement.discussion_id == discussion_id)
+            .order_by(ConsensusDisagreement.created_at)
+        )
+        all_cds = cd_result.scalars().all()
+        consensus_list = []
+        disagreement_list = []
+        for c in all_cds:
+            try:
+                source_ids = jsonlib.loads(c.source_utterance_ids) if c.source_utterance_ids else []
+            except (jsonlib.JSONDecodeError, TypeError):
+                source_ids = []
+            item = {
+                "id": c.id, "type": c.type, "title": c.title,
+                "description": c.description,
+                "sourceUtteranceIds": source_ids,
+                "confidence": c.confidence, "isResolved": bool(c.is_resolved),
+                "roundNum": c.round_num,
+            }
+            if c.type == "consensus":
+                consensus_list.append(item)
+            else:
+                disagreement_list.append(item)
+
         db.commit()
 
     await ws.send_json({
@@ -105,9 +133,9 @@ async def send_initial_snapshot(ws: WebSocket, discussion_id: str):
             "currentRound": d.current_round,
             "totalUtterances": len(transcript),
             "transcript": transcript,
+            "consensus": consensus_list,
+            "disagreements": disagreement_list,
             "panel": panel,
-            "consensus": [],
-            "disagreements": [],
         },
     })
 

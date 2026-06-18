@@ -4,20 +4,32 @@ from app.agents.llm_client import llm_client
 
 OBSERVER_SYSTEM_PROMPT = """你是一位圆桌讨论的独立观察员。你的职责是增量分析每条新发言，判断是否产生新的共识或分歧。
 
-输出格式要求：严格输出 JSON (仅此一次)：
+输出格式要求：严格输出 JSON (不要输出其他任何内容)：
 {
-  "action": "created|updated|resolved",
-  "type": "consensus|disagreement",
-  "title": "简短标题 ≤30字",
-  "description": "详细说明 ≤200字",
-  "source_utterance_ids": ["u-1", "u-5"],
+  "action": "created",
+  "type": "consensus",
+  "title": "识别出的共识或分歧的简短标题",
+  "description": "综合发言内容，给出一条具体、有信息量的判断",
+  "source_utterance_ids": ["u-1", "u-2"],
   "confidence": 0.85,
   "is_resolved": false,
-  "round_num": N
+  "round_num": 1
 }
 
-如果本发言没有产生新的共识或分歧，输出：{"action": "none"}
-不要输出其他内容。"""
+action 说明:
+- created: 新产生了一个共识或分歧
+- updated: 已有共识/分歧被新发言印证或增强
+- resolved: 已有分歧被化解
+
+type 说明:
+- consensus: 两位及以上专家观点一致或相互支持
+- disagreement: 两位及以上专家观点对立或冲突
+
+判断标准:
+- 仅当最新发言明确支持/反对/印证已有观点时才标记共识或分歧
+- 置信度0-1, 0.7以上才输出, 低于则认为不够明确
+- 如果最新发言只是陈述观点、没有与他人形成明确共识/分歧 → 输出 {"action": "none"}
+- 不要做过度解读"""
 
 
 class ObserverAgent:
