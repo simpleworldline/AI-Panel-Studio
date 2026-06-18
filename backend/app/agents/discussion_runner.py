@@ -80,12 +80,18 @@ class DiscussionRunner:
                 if opening:
                     await db.commit()
 
-            # === 2. Main loop ===
+            # === 2. Main debate loop ===
+            #
+            # Debate window model (非机械轮替):
+            #   One speaker speaks → all other agents re-evaluate desire
+            #   → if someone rebuts/questions → they speak
+            #   → repeat until no one responds → round ends
+            #
             transcript = [opening] if opening else []
             round_count = 0
+            max_steps_per_round = 3  # 1 initial + 1 rebuttal + 1 response = round ends
 
             while not self._stopped.is_set() and round_count < 100:
-                # If paused, wait for resume or force_step (DB already updated by REST)
                 if not self._paused.is_set():
                     await asyncio.wait(
                         [asyncio.create_task(self._paused.wait()),
@@ -96,75 +102,130 @@ class DiscussionRunner:
                     continue
 
                 self._force_step.clear()
-
                 if self._stopped.is_set():
                     break
 
+                # === Start a new round ===
+                round_count += 1
+                step_in_round = 0
+                round_finished = False
+
+                # Broadcast all agents preparing for this round
                 async with session_factory() as db:
-                    # Refresh state
                     d2 = await db.get(Discussion, self.discussion_id)
                     if d2 is None or d2.status not in ("live",):
-                        break
-
-                    # Reload agents (they're stateless enough to recreate)
-                    _, host, experts = await self._init_round(db)
-                    if host is None:
-                        break
-
-                    # Reload transcript
-                    transcript = await self._load_transcript(db)
-
-                    # End conditions
-                    if d2.status == "ended":
                         break
                     if d2.max_rounds and d2.current_round >= d2.max_rounds:
                         await self._end_discussion(db, d2, host, "max_rounds")
                         break
 
+                    _, host, experts = await self._init_round(db)
+                    if host is None:
+                        break
+                    transcript = await self._load_transcript(db)
                     all_agents = [host] + experts
 
-                    # Each agent calculates desire + broadcasts status
-                    for agent in all_agents:
-                        agent._desire = await agent.calculate_desire(transcript, d2.topic)
-                        await self._broadcast(db, agent, "preparing")
+                    # Reset silent counters for new round
+                    for a in all_agents:
+                        a._rounds_silent = 0
 
-                    # Scheduler picks speaker
-                    speaker = await self.scheduler.select_speaker(all_agents)
-                    if speaker is None:
-                        for a in all_agents:
-                            await self._broadcast(db, a, "idle")
+                # === Debate window: keep going until no one responds ===
+                last_speaker_id = None  # prevent same agent speaking twice in a row
+
+                while not round_finished and step_in_round < max_steps_per_round:
+                    if self._stopped.is_set():
+                        break
+
+                    async with session_factory() as db:
+                        d2 = await db.get(Discussion, self.discussion_id)
+                        if d2 is None or d2.status not in ("live",):
+                            break
+                        _, host, experts = await self._init_round(db)
+                        if host is None:
+                            break
+                        transcript = await self._load_transcript(db)
+                        all_agents = [host] + experts
+
+                        # Each agent re-calculates desire based on latest transcript
+                        for agent in all_agents:
+                            agent._desire = await agent.calculate_desire(transcript, d2.topic)
+                            await self._broadcast(db, agent, "preparing")
+
+                        # Exclude last speaker to enforce rebuttal/response pattern
+                        candidates = all_agents if last_speaker_id is None else [
+                            a for a in all_agents if a.member_id != last_speaker_id
+                        ]
+
+                        # Scheduler picks speaker
+                        speaker = await self.scheduler.select_speaker(candidates)
+                        if speaker is None:
+                            # If first step of round and host hasn't spoken, host asks a question
+                            if step_in_round == 0:
+                                host._desire = 1.0
+                                await self._broadcast(db, host, "preparing")
+                                utterance = await self._agent_speak(
+                                    db, host, transcript, d2.topic,
+                                    "question", d2.current_round + 1,
+                                )
+                                if utterance:
+                                    last_speaker_id = host.member_id
+                                    transcript.append(utterance)
+                                    step_in_round += 1
+                                    await self._broadcast(db, host, "idle")
+                                    await db.commit()
+                                    continue
+
+                            # No one wants to speak → round naturally ends
+                            round_finished = True
+                            for a in all_agents:
+                                await self._broadcast(db, a, "idle")
+                            await db.commit()
+                            break
+
+                        # Speaker generates their utterance
+                        utype = "statement"
+                        if speaker.__class__.__name__ == "HostAgent":
+                            # Host may ask questions or make statements
+                            utype = "question" if step_in_round == 0 else "statement"
+
+                        utterance = await self._agent_speak(
+                            db, speaker, transcript, d2.topic,
+                            utype, d2.current_round + 1,
+                        )
+
+                        if utterance:
+                            last_speaker_id = speaker.member_id
+                            speaker.mark_spoke()
+                            for a in all_agents:
+                                if a != speaker:
+                                    a.mark_silent()
+
+                            transcript.append(utterance)  # already formatted dict
+
+                            # Observer analyzes (utterance is already a formatted dict from _agent_speak)
+                            existing = await self._load_consensus(db)
+                            latest = utterance
+                            analysis = await self.observer.analyze(transcript, latest, existing)
+                            if analysis:
+                                await self._save_consensus(db, analysis)
+                                await self._broadcast_raw({
+                                    "type": "consensus_update", "data": analysis,
+                                })
+                                logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')}")
+
+                            step_in_round += 1
+
+                        await self._broadcast(db, speaker, "idle")
                         await db.commit()
-                        await asyncio.sleep(1)
-                        continue
 
-                    # Speak
-                    utterance = await self._agent_speak(
-                        db, speaker, transcript, d2.topic,
-                        "statement", d2.current_round + 1,
-                    )
-                    if utterance:
-                        speaker.mark_spoke()
-                        for a in all_agents:
-                            if a != speaker:
-                                a.mark_silent()
-
-                        # Observer analysis
-                        latest = self._fmt_utterance(utterance, speaker)
-                        existing = await self._load_consensus(db)
-                        analysis = await self.observer.analyze(transcript, latest, existing)
-                        if analysis:
-                            await self._save_consensus(db, analysis)
-                            await self._broadcast_raw({
-                                "type": "consensus_update", "data": analysis,
-                            })
-                            logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')}")
-
-                        transcript.append(self._fmt_utterance(utterance, speaker))
-
-                    await self._broadcast(db, speaker, "idle")
-                    d2.current_round += 1
-                    round_count += 1
-                    await db.commit()
+                # Update round counter
+                if not self._stopped.is_set():
+                    async with session_factory() as db:
+                        d2 = await db.get(Discussion, self.discussion_id)
+                        if d2:
+                            d2.current_round += 1
+                            await db.commit()
+                    logger.info(f"[{self.discussion_id[:8]}] Round {round_count} ended, {step_in_round} steps")
 
             # === 3. End ===
             async with session_factory() as db:
