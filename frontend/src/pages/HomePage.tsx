@@ -10,8 +10,19 @@ export function HomePage() {
   const navigate = useNavigate();
   const { discussions, listLoading, listError, activeTab, fetchList, setActiveTab } = useDiscussionStore();
 
+  // Filter discussions by tab: "进行中" = live + paused, others = exact match
+  const filteredDiscussions = activeTab === 'live'
+    ? discussions.filter(d => d.status === 'live' || d.status === 'paused')
+    : discussions.filter(d => d.status === activeTab);
+
   useEffect(() => {
-    fetchList(activeTab);
+    // "进行中" tab shows both live AND paused discussions
+    if (activeTab === 'live') {
+      // fetch all non-ended, then filter client-side
+      fetchList(undefined);   // no filter = all statuses
+    } else {
+      fetchList(activeTab);
+    }
   }, [activeTab]);
 
   return (
@@ -62,7 +73,7 @@ export function HomePage() {
               <Button variant="secondary" size="sm" onClick={() => fetchList(activeTab)}>重试</Button>
             </div>
           </div>
-        ) : discussions.length === 0 ? (
+        ) : filteredDiscussions.length === 0 ? (
           <div className="py-20">
             <EmptyState
               title={
