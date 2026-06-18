@@ -27,11 +27,13 @@ export function StudioPage() {
   const { fetchDetail, detailLoading, detailError, currentDiscussion } = useDiscussionStore();
   const addToast = useToastStore((s) => s.addToast);
   const wsRef = useRef<StudioWebSocket | null>(null);
-  const [hasStarted, setHasStarted] = useState(false);  // 跟踪是否已点击开始
+  const [starting, setStarting] = useState(false);
+  const initRef = useRef(false); // 防止重复初始化
 
   // ── Init: fetch detail ──
   useEffect(() => {
     if (!discussionId) return;
+    initRef.current = false;
     useDiscussionStore.getState().clearCurrent();
     useStudioStore.getState().reset();
     fetchDetail(discussionId);
@@ -41,10 +43,10 @@ export function StudioPage() {
     };
   }, [discussionId]);
 
-  // ── When detail loads, init store + connect WS ──
+  // ── When detail loads, init store ──
   useEffect(() => {
     if (!currentDiscussion || !discussionId) return;
-
+    if (initRef.current) return;
     if (currentDiscussion.status === 'ended') {
       navigate(`/report/${discussionId}`, { replace: true });
       return;
@@ -53,56 +55,37 @@ export function StudioPage() {
     const isCreator = currentDiscussion.creatorSessionId === getSessionId();
     try {
       useStudioStore.getState().init(currentDiscussion, isCreator);
+      initRef.current = true;
     } catch {
       addToast({ type: 'error', message: '初始化讨论失败' });
-      return;
     }
+  }, [currentDiscussion, discussionId]);
 
-    // WS handler
+  // ── WebSocket 连接 (live/paused 状态时) ──
+  useEffect(() => {
+    if (!discussionId || !currentDiscussion) return;
+    const s = useStudioStore.getState();
+    if (currentDiscussion.status !== 'live' && currentDiscussion.status !== 'paused') return;
+    if (s.wsStatus === 'connected') return;
+
     const eventHandler = (event: WsServerEvent) => {
-      const s = useStudioStore.getState();
+      const st = useStudioStore.getState();
       switch (event.type) {
-        case 'expert_status':
-          s.handleExpertStatus(event.data);
-          break;
-        case 'utterance_token':
-          s.handleUtteranceToken(event.data);
-          break;
-        case 'utterance_complete':
-          s.handleUtteranceComplete({
-            id: event.data.utteranceId,
-            panelMemberId: event.data.memberId,
-            memberName: event.data.memberName,
-            memberTitle: event.data.memberTitle,
-            memberColor: event.data.memberColor,
-            content: event.data.content,
-            utteranceType: event.data.utteranceType,
-            sequenceNum: event.data.sequenceNum,
-            roundNum: event.data.roundNum,
-            createdAt: event.data.createdAt,
-          });
-          break;
-        case 'consensus_update':
-          s.handleConsensusUpdate(event.data);
-          break;
-        case 'discussion_paused':
-          s.handleDiscussionPaused();
-          addToast({ type: 'info', message: '讨论已暂停' });
-          break;
-        case 'discussion_resumed':
-          s.handleDiscussionResumed();
-          addToast({ type: 'info', message: '讨论已继续' });
-          break;
-        case 'discussion_ended':
-          s.handleDiscussionEnded();
-          addToast({ type: 'info', message: '讨论已结束' });
-          break;
-        case 'discussion_control':
-          addToast({ type: 'info', message: event.data.message });
-          break;
-        case 'initial_snapshot':
-          s.handleInitialSnapshot(event.data);
-          break;
+        case 'expert_status': st.handleExpertStatus(event.data); break;
+        case 'utterance_token': st.handleUtteranceToken(event.data); break;
+        case 'utterance_complete': st.handleUtteranceComplete({
+          id: event.data.utteranceId, panelMemberId: event.data.memberId,
+          memberName: event.data.memberName, memberTitle: event.data.memberTitle,
+          memberColor: event.data.memberColor, content: event.data.content,
+          utteranceType: event.data.utteranceType, sequenceNum: event.data.sequenceNum,
+          roundNum: event.data.roundNum, createdAt: event.data.createdAt,
+        }); break;
+        case 'consensus_update': st.handleConsensusUpdate(event.data); break;
+        case 'discussion_paused': st.handleDiscussionPaused(); addToast({ type: 'info', message: '讨论已暂停' }); break;
+        case 'discussion_resumed': st.handleDiscussionResumed(); addToast({ type: 'info', message: '讨论已继续' }); break;
+        case 'discussion_ended': st.handleDiscussionEnded(); addToast({ type: 'info', message: '讨论已结束' }); break;
+        case 'discussion_control': addToast({ type: 'info', message: event.data.message }); break;
+        case 'initial_snapshot': st.handleInitialSnapshot(event.data); break;
       }
     };
 
@@ -111,21 +94,18 @@ export function StudioPage() {
     wsRef.current = ws;
     ws.connect();
 
-    const checkTimer = setTimeout(() => {
-      if (wsRef.current === ws) {
-        useStudioStore.getState().setWsStatus('connected');
-      }
+    const timer = setTimeout(() => {
+      if (wsRef.current === ws) useStudioStore.getState().setWsStatus('connected');
     }, 2000);
 
-    return () => {
-      clearTimeout(checkTimer);
-      ws.close();
-    };
-  }, [currentDiscussion, discussionId]);
+    return () => { clearTimeout(timer); ws.close(); };
+  }, [discussionId, currentDiscussion?.status]);
 
-  // ── REST polling fallback ──
+  // ── REST polling fallback (live/paused 时轮询) ──
   useEffect(() => {
     if (!discussionId) return;
+    if (currentDiscussion?.status !== 'live' && currentDiscussion?.status !== 'paused') return;
+
     const interval = setInterval(async () => {
       try {
         const res = await fetchDiscussionDetail(discussionId);
@@ -163,19 +143,34 @@ export function StudioPage() {
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [discussionId]);
+  }, [discussionId, currentDiscussion?.status]);
+
+  // ── 点击「开始讨论」— 直接在 pending 视图中处理 ──
+  const handleStart = async () => {
+    if (!discussionId) return;
+    setStarting(true);
+    try {
+      await startDiscussion(discussionId);
+      // 更新 currentDiscussion.status → 触发 WS useEffect + 演播厅视图
+      useDiscussionStore.setState((s) => ({
+        currentDiscussion: s.currentDiscussion
+          ? { ...s.currentDiscussion, status: 'live' as const }
+          : null,
+      }));
+      addToast({ type: 'success', message: '讨论已开始' });
+    } catch (e: any) {
+      addToast({ type: 'error', message: e.message || '开始讨论失败' });
+    } finally {
+      setStarting(false);
+    }
+  };
 
   // ── Control commands ──
   const sendCommand = useCallback(
-    async (type: 'start' | 'advance' | 'pause' | 'resume' | 'end') => {
+    async (type: 'advance' | 'pause' | 'resume' | 'end') => {
       if (!discussionId) return;
       try {
-        if (type === 'start') {
-          await startDiscussion(discussionId);
-          useStudioStore.getState().handleDiscussionResumed();
-          setHasStarted(true);
-          addToast({ type: 'success', message: '讨论已开始' });
-        } else if (type === 'pause') {
+        if (type === 'pause') {
           await pauseDiscussion(discussionId);
         } else if (type === 'resume') {
           await resumeDiscussion(discussionId);
@@ -184,8 +179,8 @@ export function StudioPage() {
         } else if (type === 'end') {
           await endDiscussion(discussionId);
         }
-      } catch {
-        addToast({ type: 'error', message: '操作失败，请重试' });
+      } catch (e: any) {
+        addToast({ type: 'error', message: e.message || '操作失败，请重试' });
       }
     },
     [discussionId, addToast],
@@ -230,8 +225,8 @@ export function StudioPage() {
     );
   }
 
-  // ── Pending: 显示开始按钮（未点击开始前） ──
-  if (currentDiscussion.status === 'pending' && !hasStarted) {
+  // ── Pending: 显示嘉宾预览 + 开始按钮 ──
+  if (currentDiscussion.status === 'pending') {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-4">
         <div className="text-center">
@@ -262,21 +257,21 @@ export function StudioPage() {
           ))}
         </div>
 
-        {isCreator && (
-          <Button variant="primary" size="lg" onClick={() => sendCommand('start')}>
+        {isCreator ? (
+          <Button variant="primary" size="lg" loading={starting} onClick={handleStart}>
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>
             开始讨论
           </Button>
-        )}
-        {!isCreator && (
+        ) : (
           <p className="text-sm text-[var(--color-studio-fg-muted)]">等待主持人开始讨论…</p>
         )}
       </div>
     );
   }
 
+  // ── 演播厅视图 (live / paused) ──
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* topic bar */}
@@ -292,15 +287,15 @@ export function StudioPage() {
         )}
       </div>
 
-      {/* Expert strip (< 1400px: horizontal) */}
+      {/* Expert strip (小屏水平滚动) */}
       <div className="flex lg:hidden gap-2 px-4 py-2
         bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)] overflow-x-auto shrink-0">
         <ExpertStatusPanel members={members} statuses={expertStatuses} compact />
       </div>
 
-      {/* Studio Grid — responsive: 3-col @ lg, 2-col @ md, 1-col @ base */}
+      {/* Studio Grid — responsive */}
       <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[280px_1fr_320px]">
-        {/* Left: Expert Panel (hidden < 1400px via responsive) */}
+        {/* Left: Expert Panel */}
         <aside className="hidden lg:flex flex-col overflow-y-auto border-r border-[var(--color-studio-border)]">
           <div className="sticky top-0 z-[var(--z-sticky)] flex items-center gap-2 px-4 py-3
             bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)]
