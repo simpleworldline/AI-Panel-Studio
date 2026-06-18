@@ -267,13 +267,17 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
       status: (data.status === 'ended') ? 'ended' as const :
               (data.status === 'paused') ? 'paused' as const :
               (data.status === 'live') ? 'live' as const : s.status,
-      // Merge members from snapshot if provided and store is empty
-      members: (data.panel && s.members.length === 0)
+      // Always replace members from WS snapshot when provided
+      members: data.panel
         ? (data.panel as any[]).map((p: any) => ({
             id: p.id, name: p.name, title: p.title,
             role: p.role, stance: p.stance, color: p.color,
           }))
         : s.members,
+      // Clear stale expert statuses on new snapshot
+      expertStatuses: data.panel && (s.discussionId !== data.discussionId)
+        ? {}
+        : s.expertStatuses,
     }));
   },
 

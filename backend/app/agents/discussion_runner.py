@@ -1,9 +1,4 @@
-"""DiscussionRunner — utterance-count-based continuous debate.
-
-No rounds. Agents speak in a debate window: one speaks → rebuttals/responses
-follow naturally until no one responds. The debate window then restarts.
-Discussion ends when total utterances reach max_utterances or user ends.
-"""
+"""DiscussionRunner — continuous debate with per-utterance sessions"""
 
 import asyncio
 import json
@@ -44,6 +39,7 @@ class DiscussionRunner:
         self._force_step.clear()
         self._stopped = asyncio.Event()
         self._stopped.clear()
+        self._already_ended = False
 
     async def run(self, session_factory: async_sessionmaker) -> bool:
         for _ in range(5):
@@ -57,7 +53,7 @@ class DiscussionRunner:
             return False
 
         try:
-            # ── Opening ──
+            # === Opening ===
             async with session_factory() as db:
                 d, host, experts = await self._init_agents(db)
                 if d is None or host is None:
@@ -68,11 +64,9 @@ class DiscussionRunner:
 
             transcript = [opening] if opening else []
 
-            # ── Continuous debate ──
+            # === Continuous debate ===
             while not self._stopped.is_set():
-                # pause / force-step wait
                 if not self._paused.is_set():
-                    # Runner's DB write for pause status
                     async with session_factory() as db_p:
                         d_p = await db_p.get(Discussion, self.discussion_id)
                         if d_p and d_p.status == "live":
@@ -86,7 +80,6 @@ class DiscussionRunner:
                     self._force_step.clear()
                     if self._stopped.is_set():
                         break
-                    # Write resume status
                     async with session_factory() as db_r:
                         d_r = await db_r.get(Discussion, self.discussion_id)
                         if d_r and d_r.status == "paused":
@@ -98,21 +91,18 @@ class DiscussionRunner:
                 if self._stopped.is_set():
                     break
 
-                # Quick read-only check: should we continue?
+                # === Check end conditions ===
                 async with session_factory() as db_check:
                     d2 = await db_check.get(Discussion, self.discussion_id)
                     if d2 is None or d2.status not in ("live",):
                         break
                     max_utterances = d2.max_rounds or 15
-                    # Count total utterances
                     count_result = await db_check.execute(
                         select(func.count(Utterance.id)).where(
                             Utterance.discussion_id == self.discussion_id
                         )
                     )
                     total = count_result.scalar() or 0
-                    current_round = d2.current_round or 0
-                    # Update the counder column for consistency
                     d2.current_round = total
                     await db_check.commit()
 
@@ -123,124 +113,138 @@ class DiscussionRunner:
                             _, host_end, _ = await self._init_agents(db_end)
                             if host_end:
                                 await self._end_discussion(db_end, d_end, host_end, "max_utterances")
+                                self._already_ended = True
                     break
 
-                # ── Debate window: each step in its own session ──
+                # === Debate window ===
                 steps = 0
                 last_speaker_id = None
-                parent_utterance_id = None   # first utterance in window → followers nest under it
+                parent_utterance_id = None
 
                 while steps < 4 and not self._stopped.is_set():
 
                     async with session_factory() as db_step:
-                            d_step = await db_step.get(Discussion, self.discussion_id)
-                            if d_step is None or d_step.status not in ("live",):
-                                break
+                        d_step = await db_step.get(Discussion, self.discussion_id)
+                        if d_step is None or d_step.status not in ("live",):
+                            break
 
-                            _, host_step, experts_step = await self._init_agents(db_step)
-                            if host_step is None:
-                                break
+                        _, host_step, experts_step = await self._init_agents(db_step)
+                        if host_step is None:
+                            break
 
-                            transcript = await self._load_transcript(db_step)
-                            all_agents_step = [host_step] + experts_step
+                        transcript = await self._load_transcript(db_step)
+                        all_agents_step = [host_step] + experts_step
 
-                            for agent in all_agents_step:
-                                agent._desire = await agent.calculate_desire(transcript, d_step.topic)
-                                await self._broadcast(db_step, agent, "preparing")
+                        for agent in all_agents_step:
+                            agent._desire = await agent.calculate_desire(transcript, d_step.topic)
+                            await self._broadcast(db_step, agent, "preparing")
 
-                            candidates = all_agents_step if last_speaker_id is None else [
-                                a for a in all_agents_step if a.member_id != last_speaker_id
-                            ]
+                        candidates = all_agents_step if last_speaker_id is None else [
+                            a for a in all_agents_step if a.member_id != last_speaker_id
+                        ]
 
-                            speaker = await self.scheduler.select_speaker(candidates)
-                            if speaker is None:
-                                for a in all_agents_step:
-                                    await self._broadcast(db_step, a, "idle")
-                                await db_step.commit()
-                                break
-
-                            utype = "question" if (speaker.__class__.__name__ == "HostAgent" and steps == 0) else "statement"
-
-                            # First speaker in window → no parent; followers → nest under it
-                            pid = None if steps == 0 else parent_utterance_id
-                            utterance = await self._agent_speak(db_step, speaker, transcript, d_step.topic, utype, pid)
-
-                            if utterance:
-                                # Root utterance of this window → followers nest under it
-                                if parent_utterance_id is None:
-                                    parent_utterance_id = utterance.get("utterance_id")
-                                last_speaker_id = speaker.member_id
-                                speaker.mark_spoke()
-                                for a in all_agents_step:
-                                    if a != speaker:
-                                        a.mark_silent()
-                                transcript.append(utterance)
-
-                                existing = await self._load_consensus(db_step)
-                                analysis = await self.observer.analyze(transcript, utterance, existing)
-                                if analysis:
-                                    consensus_db = await self._save_consensus(db_step, analysis)
-                                    record = {
-                                        "id": consensus_db.id,
-                                        "type": analysis.get("type", "consensus"),
-                                        "title": analysis.get("title", ""),
-                                        "description": analysis.get("description", ""),
-                                        "source_utterance_ids": (
-                                            json.loads(consensus_db.source_utterance_ids)
-                                            if consensus_db.source_utterance_ids else []
-                                        ),
-                                        "confidence": analysis.get("confidence", 0.5),
-                                        "is_resolved": bool(consensus_db.is_resolved),
-                                        "round_num": analysis.get("round_num", 0),
-                                    }
-                                    await self._broadcast_raw({
-                                        "type": "consensus_update",
-                                        "data": {"action": analysis.get("action", "created"), "record": record},
-                                    })
-                                steps += 1
-
-                            await self._broadcast(db_step, speaker, "idle")
+                        speaker = await self.scheduler.select_speaker(candidates)
+                        if speaker is None:
+                            if steps == 0:
+                                host_step._desire = 1.0
+                                await self._broadcast(db_step, host_step, "preparing")
+                                utterance = await self._agent_speak(
+                                    db_step, host_step, transcript, d_step.topic, "question")
+                                if utterance:
+                                    last_speaker_id = host_step.member_id
+                                    transcript.append(utterance)
+                                    steps += 1
+                                    await self._broadcast(db_step, host_step, "idle")
+                                    await db_step.commit()
+                                    if self._stopped.is_set():
+                                        await self._quick_end(db_step, d_step, "user_ended")
+                                        self._already_ended = True
+                                        return True
+                                    if not self._paused.is_set():
+                                        break
+                                    continue
+                            for a in all_agents_step:
+                                await self._broadcast(db_step, a, "idle")
                             await db_step.commit()
+                            break
 
-                            # pause/stop after each utterance
-                            if self._stopped.is_set():
-                                for a in all_agents_step:
-                                    await self._broadcast(db_step, a, "idle")
-                                await self._end_discussion(db_step, d_step, host_step, "user_ended")
-                                return True
-                            if not self._paused.is_set():
-                                for a in all_agents_step:
-                                    await self._broadcast(db_step, a, "idle")
-                                break
+                        utype = "question" if (speaker.__class__.__name__ == "HostAgent" and steps == 0) else "statement"
+                        pid = None if steps == 0 else parent_utterance_id
+                        utterance = await self._agent_speak(db_step, speaker, transcript, d_step.topic, utype, pid)
 
-                    # Update utterance counter in DB
+                        if utterance:
+                            if parent_utterance_id is None:
+                                parent_utterance_id = utterance.get("utterance_id")
+                            last_speaker_id = speaker.member_id
+                            speaker.mark_spoke()
+                            for a in all_agents_step:
+                                if a != speaker:
+                                    a.mark_silent()
+                            transcript.append(utterance)
+
+                            existing = await self._load_consensus(db_step)
+                            analysis = await self.observer.analyze(transcript, utterance, existing)
+                            if analysis:
+                                consensus_db = await self._save_consensus(db_step, analysis)
+                                await self._broadcast_raw({
+                                    "type": "consensus_update",
+                                    "data": {
+                                        "action": analysis.get("action", "created"),
+                                        "record": {
+                                            "id": consensus_db.id,
+                                            "type": analysis.get("type", "consensus"),
+                                            "title": analysis.get("title", ""),
+                                            "description": analysis.get("description", ""),
+                                            "source_utterance_ids": (
+                                                json.loads(consensus_db.source_utterance_ids)
+                                                if consensus_db.source_utterance_ids else []
+                                            ),
+                                            "confidence": analysis.get("confidence", 0.5),
+                                            "is_resolved": bool(consensus_db.is_resolved),
+                                            "round_num": analysis.get("round_num", 0),
+                                        },
+                                    },
+                                })
+                            steps += 1
+
+                        await self._broadcast(db_step, speaker, "idle")
+                        await db_step.commit()
+
+                        # User clicked end: immediate close, NO summary
+                        if self._stopped.is_set():
+                            for a in all_agents_step:
+                                await self._broadcast(db_step, a, "idle")
+                            await self._quick_end(db_step, d_step, "user_ended")
+                            self._already_ended = True
+                            return True
+                        # User clicked pause: end this debate window
+                        if not self._paused.is_set():
+                            for a in all_agents_step:
+                                await self._broadcast(db_step, a, "idle")
+                            break
+
+                # Update utterance counter
+                if not self._stopped.is_set():
                     async with session_factory() as db_total:
                         d_total = await db_total.get(Discussion, self.discussion_id)
                         if d_total:
-                            total_now_result = await db_total.execute(
+                            count = await db_total.execute(
                                 select(func.count(Utterance.id)).where(
                                     Utterance.discussion_id == self.discussion_id
                                 )
                             )
-                            d_total.current_round = total_now_result.scalar() or 0
+                            d_total.current_round = count.scalar() or 0
                             await db_total.commit()
 
-            # ── Auto-end: always generate summary ──
-            async with session_factory() as db:
-                d3 = await db.get(Discussion, self.discussion_id)
-                if d3:
-                    total_result = await db.execute(
-                        select(func.count(Utterance.id)).where(
-                            Utterance.discussion_id == self.discussion_id
-                        )
-                    )
-                    existing_total = total_result.scalar() or 0
-                    # Generate summary regardless of DB status — it was set by REST,
-                    # but summary generation is the runner's job
-                    if existing_total > 0:
-                        _, host, _ = await self._init_agents(db)
-                        if host:
-                            await self._end_discussion(db, d3, host, "host_decided")
+            # === Auto-end: summary only for natural completion ===
+            if not self._already_ended:
+                async with session_factory() as db_final:
+                    d_final = await db_final.get(Discussion, self.discussion_id)
+                    if d_final and d_final.status not in ("ended",):
+                        _, host_final, _ = await self._init_agents(db_final)
+                        if host_final:
+                            await self._end_discussion(db_final, d_final, host_final, "host_decided")
+                            self._already_ended = True
 
         except Exception as e:
             logger.exception(f"[{self.discussion_id[:8]}] crashed: {e}")
@@ -287,7 +291,7 @@ class DiscussionRunner:
                 experts.append(ExpertAgent(m.id, m.name, m.title, m.stance, m.color))
         return d, host, experts
 
-    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype, parent_id: str | None = None) -> dict | None:
+    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype, parent_id=None) -> dict | None:
         await self._broadcast(db, agent, "speaking")
         text = ""
         async for token in agent.generate_utterance(transcript, topic):
@@ -327,7 +331,27 @@ class DiscussionRunner:
         logger.info(f"[{self.discussion_id[:8]}] {agent.name}({utype}): {text[:60]}...")
         return fmt
 
+    async def _quick_end(self, db: AsyncSession, d, reason: str):
+        """Immediate end — write DB + broadcast, no summary."""
+        d.status = "ended"
+        d.ended_at = _now()
+        await db.commit()
+        total = await db.execute(
+            select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
+        )
+        total_utterances = total.scalar() or 0
+        await self._broadcast_raw({
+            "type": "discussion_ended",
+            "data": {
+                "discussion_id": self.discussion_id, "end_reason": reason,
+                "total_rounds": total_utterances, "total_utterances": total_utterances,
+                "ended_at": d.ended_at,
+            },
+        })
+        logger.info(f"[{self.discussion_id[:8]}] quick-ended: {reason}")
+
     async def _end_discussion(self, db: AsyncSession, d, host, reason: str):
+        """Natural end — generate summary + mark ended + broadcast."""
         transcript = await self._load_transcript(db)
         summary = ""
         async for token in host.generate_summary(transcript, d.topic):
@@ -357,12 +381,10 @@ class DiscussionRunner:
         d.status = "ended"
         d.ended_at = _now()
         await db.commit()
-
         total = await db.execute(
             select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
         )
         total_utterances = total.scalar() or 0
-
         await self._broadcast_raw({
             "type": "discussion_ended",
             "data": {
