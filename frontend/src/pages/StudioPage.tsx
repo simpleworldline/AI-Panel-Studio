@@ -304,8 +304,8 @@ export function StudioPage() {
       {/* Studio Grid — responsive */}
       <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[280px_1fr_320px]">
         {/* Left: Expert Panel */}
-        <aside className="hidden lg:flex flex-col overflow-y-auto border-r border-[var(--color-studio-border)]">
-          <div className="sticky top-0 z-[var(--z-sticky)] flex items-center gap-2 px-4 py-3
+        <aside className="hidden lg:flex flex-col overflow-hidden border-r border-[var(--color-studio-border)]">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-3
             bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)]
             font-semibold text-xs uppercase tracking-wider">
             <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -314,14 +314,14 @@ export function StudioPage() {
             </svg>
             嘉宾状态
           </div>
-          <div className="p-3">
+          <div className="flex-1 overflow-y-auto p-3">
             <ExpertStatusPanel members={members} statuses={expertStatuses} />
           </div>
         </aside>
 
         {/* Center: Transcript */}
         <section className="flex flex-col overflow-hidden border-r border-[var(--color-studio-border)]">
-          <div className="sticky top-0 z-[var(--z-sticky)] flex items-center gap-2 px-4 py-3
+          <div className="shrink-0 flex items-center gap-2 px-4 py-3
             bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)]
             font-semibold text-xs uppercase tracking-wider">
             <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -333,8 +333,8 @@ export function StudioPage() {
         </section>
 
         {/* Right: Consensus */}
-        <aside className="flex flex-col overflow-y-auto">
-          <div className="sticky top-0 z-[var(--z-sticky)] flex items-center gap-2 px-4 py-3
+        <aside className="flex flex-col overflow-hidden">
+          <div className="shrink-0 flex items-center gap-2 px-4 py-3
             bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)]
             font-semibold text-xs uppercase tracking-wider">
             <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -343,7 +343,7 @@ export function StudioPage() {
             </svg>
             共识与分歧
           </div>
-          <div className="p-3">
+          <div className="flex-1 overflow-y-auto p-3">
             <ConsensusPanel items={allConsensus} />
           </div>
         </aside>
