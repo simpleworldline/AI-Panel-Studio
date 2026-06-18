@@ -99,17 +99,15 @@ async def pause_discussion(
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-
-    await DiscussionService.check_permission(db, discussion_id, x_session_id)
     try:
-        result = await DiscussionService.pause(db, discussion_id)  # writes status to DB
+        _ = await DiscussionService.pause(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     runner = runner_registry.get(discussion_id)
     if runner:
-        runner.pause()  # signal runner event
-    return ApiResponse(code=200, data=result, message="讨论已暂停")
+        runner.pause()
+    return ApiResponse(code=200, data={"discussion_id": discussion_id, "status": "paused"}, message="讨论已暂停")
 
 
 @router.post("/{discussion_id}/resume")
@@ -122,8 +120,6 @@ async def resume_discussion(
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-
-    await DiscussionService.check_permission(db, discussion_id, x_session_id)
     try:
         result = await DiscussionService.resume(db, discussion_id)
     except StateConflictError as e:
@@ -174,17 +170,20 @@ async def end_discussion(
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
-    await DiscussionService.check_permission(db, discussion_id, x_session_id)
+    runner = runner_registry.get(discussion_id)
+    # Write status immediately (even with runner — summary generation is async)
     try:
         result = await DiscussionService.end(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    runner = runner_registry.get(discussion_id)
     if runner:
         runner.stop()
 
-    return ApiResponse(code=200, data=result, message="讨论已结束")
+    return ApiResponse(code=200, data={
+        "discussion_id": discussion_id, "status": "ended",
+        "ended_at": _now(), "total_rounds": 0, "total_utterances": 0,
+    }, message="讨论已结束")
 
 
 @router.get("/{discussion_id}/report")

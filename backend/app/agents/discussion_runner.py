@@ -130,7 +130,7 @@ class DiscussionRunner:
                         a._rounds_silent = 0
 
                 # === Debate window: keep going until no one responds ===
-                last_speaker_id = None  # prevent same agent speaking twice in a row
+                last_speaker_id = None
 
                 while not round_finished and step_in_round < max_steps_per_round:
                     if self._stopped.is_set():
@@ -146,20 +146,16 @@ class DiscussionRunner:
                         transcript = await self._load_transcript(db)
                         all_agents = [host] + experts
 
-                        # Each agent re-calculates desire based on latest transcript
                         for agent in all_agents:
                             agent._desire = await agent.calculate_desire(transcript, d2.topic)
                             await self._broadcast(db, agent, "preparing")
 
-                        # Exclude last speaker to enforce rebuttal/response pattern
                         candidates = all_agents if last_speaker_id is None else [
                             a for a in all_agents if a.member_id != last_speaker_id
                         ]
 
-                        # Scheduler picks speaker
                         speaker = await self.scheduler.select_speaker(candidates)
                         if speaker is None:
-                            # If first step of round and host hasn't spoken, host asks a question
                             if step_in_round == 0:
                                 host._desire = 1.0
                                 await self._broadcast(db, host, "preparing")
@@ -173,19 +169,22 @@ class DiscussionRunner:
                                     step_in_round += 1
                                     await self._broadcast(db, host, "idle")
                                     await db.commit()
+                                    # Check pause/end after utterance
+                                    if self._stopped.is_set():
+                                        await self._end_discussion(db, d2, host, "user_ended")
+                                        break
+                                    if not self._paused.is_set():
+                                        round_finished = True; break
                                     continue
 
-                            # No one wants to speak → round naturally ends
                             round_finished = True
                             for a in all_agents:
                                 await self._broadcast(db, a, "idle")
                             await db.commit()
                             break
 
-                        # Speaker generates their utterance
                         utype = "statement"
                         if speaker.__class__.__name__ == "HostAgent":
-                            # Host may ask questions or make statements
                             utype = "question" if step_in_round == 0 else "statement"
 
                         utterance = await self._agent_speak(
@@ -200,15 +199,13 @@ class DiscussionRunner:
                                 if a != speaker:
                                     a.mark_silent()
 
-                            transcript.append(utterance)  # already formatted dict
+                            transcript.append(utterance)
 
-                            # Observer analyzes (utterance is already a formatted dict from _agent_speak)
                             existing = await self._load_consensus(db)
                             latest = utterance
                             analysis = await self.observer.analyze(transcript, latest, existing)
                             if analysis:
                                 consensus_db = await self._save_consensus(db, analysis)
-                                # Wrap observer output into {action, record} format
                                 record_for_ws = {
                                     "id": consensus_db.id,
                                     "type": analysis.get("type", "consensus"),
@@ -221,10 +218,7 @@ class DiscussionRunner:
                                 }
                                 await self._broadcast_raw({
                                     "type": "consensus_update",
-                                    "data": {
-                                        "action": analysis.get("action", "created"),
-                                        "record": record_for_ws,
-                                    },
+                                    "data": {"action": analysis.get("action", "created"), "record": record_for_ws},
                                 })
                                 logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')} {analysis.get('title','')}")
 
@@ -232,6 +226,21 @@ class DiscussionRunner:
 
                         await self._broadcast(db, speaker, "idle")
                         await db.commit()
+
+                        # ── Key: check pause/stop AFTER utterance completes ──
+                        if self._stopped.is_set():
+                            for a in all_agents:
+                                await self._broadcast(db, a, "idle")
+                            await self._end_discussion(db, d2, host, "user_ended")
+                            self._running = False
+                            return True  # exit run() entirely
+                        if not self._paused.is_set():
+                            # Paused: end this round immediately, outer loop will block
+                            for a in all_agents:
+                                await self._broadcast(db, a, "idle")
+                            round_finished = True
+                            logger.info(f"[{self.discussion_id[:8]}] Paused after utterance")
+                            break
 
                 # Update round counter
                 if not self._stopped.is_set():
