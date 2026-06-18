@@ -213,13 +213,22 @@ class DiscussionRunner:
                             d_total.current_round = total_now_result.scalar() or 0
                             await db_total.commit()
 
-            # ── Auto-end ──
+            # ── Auto-end: always generate summary ──
             async with session_factory() as db:
                 d3 = await db.get(Discussion, self.discussion_id)
-                if d3 and d3.status not in ("ended",):
-                    _, host, _ = await self._init_agents(db)
-                    if host:
-                        await self._end_discussion(db, d3, host, "host_decided")
+                if d3:
+                    total_result = await db.execute(
+                        select(func.count(Utterance.id)).where(
+                            Utterance.discussion_id == self.discussion_id
+                        )
+                    )
+                    existing_total = total_result.scalar() or 0
+                    # Generate summary regardless of DB status — it was set by REST,
+                    # but summary generation is the runner's job
+                    if existing_total > 0:
+                        _, host, _ = await self._init_agents(db)
+                        if host:
+                            await self._end_discussion(db, d3, host, "host_decided")
 
         except Exception as e:
             logger.exception(f"[{self.discussion_id[:8]}] crashed: {e}")

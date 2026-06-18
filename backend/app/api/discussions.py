@@ -171,14 +171,13 @@ async def end_discussion(
         raise HTTPException(status_code=403, detail=str(e))
 
     runner = runner_registry.get(discussion_id)
-    # Write status immediately (even with runner — summary generation is async)
     try:
         result = await DiscussionService.end(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     if runner:
-        runner.stop()
+        runner.stop()  # signal runner to generate summary
 
     return ApiResponse(code=200, data={
         "discussion_id": discussion_id, "status": "ended",
