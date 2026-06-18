@@ -38,10 +38,16 @@ async def async_engine():
 
 
 @pytest.fixture
-async def async_session(async_engine):
-    """Async session — 每次测试独立 session，测试结束自动 rollback"""
+async def _session_factory(async_engine):
+    """Session factory — 每次请求创建新 session，请求结束自动 commit（匹配生产行为）"""
     factory = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
+    return factory
+
+
+@pytest.fixture
+async def async_session(_session_factory):
+    """直接 DB 测试用的 session — 测试内部可手动 flush/rollback"""
+    async with _session_factory() as session:
         yield session
         await session.rollback()
 
@@ -53,14 +59,23 @@ def creator_headers():
 
 
 @pytest.fixture
-async def client(async_session):
-    """HTTPX async test client with dependency override"""
+async def client(_session_factory):
+    """HTTPX async test client — 每次请求独立 session，匹配生产 get_db 行为"""
     from app.main import app
     from app.db.session import get_db
     from httpx import ASGITransport, AsyncClient
 
     async def override_get_db():
-        yield async_session
+        """模拟生产 get_db：独立 session + commit + close"""
+        async with _session_factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
     transport = ASGITransport(app=app)
