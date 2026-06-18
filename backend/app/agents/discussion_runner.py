@@ -116,6 +116,7 @@ class DiscussionRunner:
                 # ── Debate window: each step in its own session ──
                 steps = 0
                 last_speaker_id = None
+                parent_utterance_id = None   # first utterance in window → followers nest under it
 
                 while steps < 4 and not self._stopped.is_set():
 
@@ -148,9 +149,14 @@ class DiscussionRunner:
 
                             utype = "question" if (speaker.__class__.__name__ == "HostAgent" and steps == 0) else "statement"
 
-                            utterance = await self._agent_speak(db_step, speaker, transcript, d_step.topic, utype)
+                            # First speaker in window → no parent; followers → nest under it
+                            pid = None if steps == 0 else parent_utterance_id
+                            utterance = await self._agent_speak(db_step, speaker, transcript, d_step.topic, utype, pid)
 
                             if utterance:
+                                # Root utterance of this window → followers nest under it
+                                if parent_utterance_id is None:
+                                    parent_utterance_id = utterance.get("utterance_id")
                                 last_speaker_id = speaker.member_id
                                 speaker.mark_spoke()
                                 for a in all_agents_step:
@@ -260,7 +266,7 @@ class DiscussionRunner:
                 experts.append(ExpertAgent(m.id, m.name, m.title, m.stance, m.color))
         return d, host, experts
 
-    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype) -> dict | None:
+    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype, parent_id: str | None = None) -> dict | None:
         await self._broadcast(db, agent, "speaking")
         text = ""
         async for token in agent.generate_utterance(transcript, topic):
@@ -291,12 +297,14 @@ class DiscussionRunner:
         db.add(u)
         await db.flush()
         await db.refresh(u)
+        fmt = self._fmt_utterance(u, agent)
+        fmt["parent_utterance_id"] = parent_id
         await self._broadcast_raw({
             "type": "utterance_complete",
-            "data": self._fmt_utterance(u, agent),
+            "data": fmt,
         })
         logger.info(f"[{self.discussion_id[:8]}] {agent.name}({utype}): {text[:60]}...")
-        return self._fmt_utterance(u, agent)
+        return fmt
 
     async def _end_discussion(self, db: AsyncSession, d, host, reason: str):
         transcript = await self._load_transcript(db)

@@ -13,6 +13,7 @@ export interface StreamingUtterance {
   memberColor: string;
   accumulatedText: string;
   isStreaming: boolean;
+  parentUtteranceId?: string | null;
 }
 
 // ── 完整发言展示 ──
@@ -28,6 +29,7 @@ export interface UtteranceDisplay {
   sequenceNum: number;
   roundNum: number;
   createdAt: string;
+  parentUtteranceId?: string | null;
 }
 
 // ── Store ──
@@ -119,7 +121,7 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
       maxRounds: detail.maxRounds,
       totalUtterances: detail.transcript.length,
       members: detail.panel,
-      utterances: detail.transcript.map((u) => ({
+      utterances: detail.transcript.map((u: any) => ({
         id: u.id,
         panelMemberId: u.panelMemberId,
         memberName: u.memberName,
@@ -130,6 +132,7 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
         sequenceNum: u.sequenceNum,
         roundNum: u.roundNum,
         createdAt: u.createdAt,
+        parentUtteranceId: u.parentUtteranceId || null,
       })),
       consensusItems: detail.consensus || [],
       disagreementItems: detail.disagreements || [],
@@ -198,7 +201,7 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
     });
   },
 
-  handleUtteranceComplete: (data) => {
+  handleUtteranceComplete: (data: any) => {
     set((s) => ({
       utterances: [
         ...s.utterances,
@@ -213,6 +216,7 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
           sequenceNum: data.sequenceNum,
           roundNum: data.roundNum,
           createdAt: data.createdAt,
+          parentUtteranceId: data.parentUtteranceId || null,
         },
       ],
       streaming: null,
@@ -254,6 +258,7 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
         memberColor: u.memberColor, content: u.content,
         utteranceType: u.utteranceType, sequenceNum: u.sequenceNum,
         roundNum: u.roundNum, createdAt: u.createdAt,
+        parentUtteranceId: u.parentUtteranceId || null,
       })),
       consensusItems: data.consensus || s.consensusItems,
       disagreementItems: data.disagreements || s.disagreementItems,

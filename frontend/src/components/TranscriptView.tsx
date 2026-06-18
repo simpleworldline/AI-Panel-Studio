@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import type { UtteranceDisplay, StreamingUtterance } from '../store/useStudioStore';
 import { UtteranceItem } from './UtteranceItem';
 import { StreamingText } from './StreamingText';
@@ -9,13 +9,34 @@ interface TranscriptViewProps {
   streaming: StreamingUtterance | null;
 }
 
+/** Group utterances into root + children for threaded view */
+function groupThreads(utterances: UtteranceDisplay[]): { roots: string[]; childrenOf: Record<string, UtteranceDisplay[]> } {
+  const roots: string[] = [];
+  const childrenOf: Record<string, UtteranceDisplay[]> = {};
+  for (const u of utterances) {
+    const pid = u.parentUtteranceId;
+    if (pid && utterances.some((r) => r.id === pid)) {
+      (childrenOf[pid] ||= []).push(u);
+    } else {
+      roots.push(u.id);
+    }
+  }
+  return { roots, childrenOf };
+}
+
 export function TranscriptView({ utterances, streaming }: TranscriptViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // 自动滚动到底部
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [utterances.length, streaming?.accumulatedText]);
+
+  const { roots, childrenOf } = useMemo(() => groupThreads(utterances), [utterances]);
+  const idMap = useMemo(() => {
+    const m: Record<string, UtteranceDisplay> = {};
+    for (const u of utterances) m[u.id] = u;
+    return m;
+  }, [utterances]);
 
   if (utterances.length === 0 && !streaming) {
     return (
@@ -33,15 +54,30 @@ export function TranscriptView({ utterances, streaming }: TranscriptViewProps) {
     );
   }
 
+  const renderUtterance = (uid: string, isChild: boolean) => {
+    const u = idMap[uid];
+    if (!u) return null;
+    const kids = childrenOf[uid];
+    return (
+      <div key={uid}>
+        <UtteranceItem utterance={u} isChild={isChild} />
+        {kids && kids.map((kid) => (
+          <div key={kid.id} className="ml-10 pl-4 border-l-2 border-[var(--color-studio-border)]">
+            <UtteranceItem utterance={kid} isChild />
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="flex-1 overflow-y-auto py-2">
-      {utterances.map((u) => (
-        <UtteranceItem key={u.id} utterance={u} />
-      ))}
+      {/* Render roots with their nested children */}
+      {roots.map((rid) => renderUtterance(rid, false))}
 
-      {/* 流式发言 */}
+      {/* Streaming utterance */}
       {streaming && (
-        <div className="flex gap-3 px-4 py-3">
+        <div className={`flex gap-3 px-4 py-3 ${streaming.parentUtteranceId ? 'ml-10 pl-4 border-l-2 border-[var(--color-studio-border)]' : ''}`}>
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 mt-0.5"
             style={{ backgroundColor: streaming.memberColor }}
