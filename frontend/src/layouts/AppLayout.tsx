@@ -30,7 +30,7 @@ export function AppLayout() {
       </header>
 
       {/* content */}
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col overflow-hidden">
         <Outlet />
       </main>
     </div>
