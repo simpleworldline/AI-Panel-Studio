@@ -16,14 +16,9 @@ export function HomePage() {
     : discussions.filter(d => d.status === activeTab);
 
   useEffect(() => {
-    // "进行中" tab shows both live AND paused discussions
-    if (activeTab === 'live') {
-      // fetch all non-ended, then filter client-side
-      fetchList(undefined);   // no filter = all statuses
-    } else {
-      fetchList(activeTab);
-    }
-  }, [activeTab]);
+    // Fetch all discussions, filter client-side for accuracy
+    fetchList(undefined);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col max-w-5xl mx-auto w-full px-4 py-6 overflow-hidden">
