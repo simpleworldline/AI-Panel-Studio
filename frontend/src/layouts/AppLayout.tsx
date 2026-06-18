@@ -4,7 +4,7 @@ export function AppLayout() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--color-studio-bg)]">
+    <div className="h-full overflow-hidden flex flex-col bg-[var(--color-studio-bg)]">
       {/* header */}
       <header className="flex items-center justify-between px-6 py-3
         bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)] shrink-0">
