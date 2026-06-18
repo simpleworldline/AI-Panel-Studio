@@ -1,0 +1,116 @@
+@import 'tailwindcss';
+
+/* ============================================================
+   AI Panel Studio — 演播厅主题变量
+   ============================================================ */
+
+@theme {
+  /* 演播厅背景层级 */
+  --color-studio-bg: #0F1117;
+  --color-studio-elevated: #1A1D2E;
+  --color-studio-card: #1E2133;
+  --color-studio-border: #2A2D3E;
+  --color-studio-border-subtle: #1E2032;
+
+  /* 文字层级 */
+  --color-studio-fg: #F1F5F9;
+  --color-studio-fg-muted: #64748B;
+  --color-studio-fg-subtle: #475569;
+
+  /* 语义色 */
+  --color-studio-gold: #F0C060;
+  --color-studio-gold-dim: #8B6914;
+  --color-studio-consensus: #34D399;
+  --color-studio-consensus-dim: #065F46;
+  --color-studio-disagreement: #FB923C;
+  --color-studio-disagreement-dim: #7C2D12;
+  --color-studio-success: #22C55E;
+  --color-studio-warning: #F59E0B;
+  --color-studio-destructive: #EF4444;
+  --color-studio-info: #3B82F6;
+
+  /* 专家预设色板 */
+  --color-expert-1: #6366F1;
+  --color-expert-2: #EF4444;
+  --color-expert-3: #10B981;
+  --color-expert-4: #F59E0B;
+  --color-expert-5: #8B5CF6;
+  --color-expert-6: #EC4899;
+  --color-expert-7: #06B6D4;
+  --color-expert-8: #F97316;
+
+  /* 字体 */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-heading: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Z-Index 分层 */
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-overlay: 30;
+  --z-modal: 50;
+
+  /* 圆角 */
+  --radius-studio: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-full: 9999px;
+
+  /* 阴影 */
+  --shadow-studio: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-card: 0 4px 12px rgba(0,0,0,0.3);
+  --shadow-glow: 0 0 12px rgba(99,102,241,0.3);
+}
+
+/* 全局基础 */
+html {
+  background-color: var(--color-studio-bg);
+  color: var(--color-studio-fg);
+  font-family: var(--font-sans);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-studio-border); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-studio-fg-subtle); }
+
+/* 动画 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 4px rgba(99,102,241,0.2); }
+  50% { box-shadow: 0 0 12px rgba(99,102,241,0.4); }
+}
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes statusPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.7; }
+}
+
+.animate-fade-in { animation: fadeIn 0.2s ease-out; }
+.animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+.animate-blink-cursor { animation: blinkCursor 0.8s ease-in-out infinite; }
+.animate-status-pulse { animation: statusPulse 1.5s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-pulse-glow,
+  .animate-blink-cursor,
+  .animate-status-pulse { animation: none; }
+}
