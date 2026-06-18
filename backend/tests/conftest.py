@@ -65,7 +65,19 @@ def creator_headers():
 
 @pytest.fixture
 async def client(_session_factory):
-    """HTTPX async test client — 每次请求独立 session，匹配生产 get_db 行为"""
+    """HTTPX async test client — 每次请求独立 session，匹配生产 get_db 行为。
+
+    关键: runner_registry.get 被 mock 为始终返回 None。
+          测试中不启动/不控制后台 Runner（避免 SQLite 写锁竞争 + 不确定行为）。
+          测试仅验证 REST API 契约和状态流转，Agent 调度由 unit test 覆盖。
+    """
+    # Prevent runner access in tests — always take "no runner" path
+    import app.services.runner_registry as rr_mod
+    _original_get = rr_mod.runner_registry.get
+    _original_ir = rr_mod.runner_registry.is_running
+    rr_mod.runner_registry.get = lambda *a, **kw: None
+    rr_mod.runner_registry.is_running = lambda *a, **kw: False
+
     from app.main import app
     from app.db.session import get_db
     from httpx import ASGITransport, AsyncClient

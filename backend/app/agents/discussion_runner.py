@@ -72,6 +72,12 @@ class DiscussionRunner:
             while not self._stopped.is_set():
                 # pause / force-step wait
                 if not self._paused.is_set():
+                    # Runner's DB write for pause status
+                    async with session_factory() as db_p:
+                        d_p = await db_p.get(Discussion, self.discussion_id)
+                        if d_p and d_p.status == "live":
+                            d_p.status = "paused"
+                            await db_p.commit()
                     await asyncio.wait(
                         [asyncio.create_task(self._paused.wait()),
                          asyncio.create_task(self._force_step.wait())],
@@ -80,6 +86,12 @@ class DiscussionRunner:
                     self._force_step.clear()
                     if self._stopped.is_set():
                         break
+                    # Write resume status
+                    async with session_factory() as db_r:
+                        d_r = await db_r.get(Discussion, self.discussion_id)
+                        if d_r and d_r.status == "paused":
+                            d_r.status = "live"
+                            await db_r.commit()
                     continue
 
                 self._force_step.clear()

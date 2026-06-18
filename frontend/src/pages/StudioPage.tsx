@@ -38,7 +38,6 @@ export function StudioPage() {
     useStudioStore.getState().reset();
     fetchDetail(discussionId);
     return () => {
-      wsRef.current?.close();
       useStudioStore.getState().reset();
     };
   }, [discussionId]);
@@ -98,7 +97,11 @@ export function StudioPage() {
       if (wsRef.current === ws) useStudioStore.getState().setWsStatus('connected');
     }, 2000);
 
-    return () => { clearTimeout(timer); ws.close(); };
+    return () => {
+      clearTimeout(timer);
+      ws.close();
+      wsRef.current = null;
+    };
   }, [discussionId, currentDiscussion?.status]);
 
   // ── REST polling fallback (live/paused 时轮询) ──

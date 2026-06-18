@@ -51,8 +51,9 @@ class RunnerRegistry:
         """后台任务完成时清理"""
         self._tasks.pop(discussion_id, None)
         self._runners.pop(discussion_id, None)
-        if task.exception():
-            logger.error(f"Runner task for {discussion_id[:8]} failed: {task.exception()}")
+        exc = task.exception()
+        if exc and not isinstance(exc, asyncio.CancelledError):
+            logger.error(f"Runner task for {discussion_id[:8]} failed: {exc}")
 
 
 # 全局单例
