@@ -96,17 +96,20 @@ async def pause_discussion(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await DiscussionService.check_permission(db, discussion_id, x_session_id)
+        d = await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    try:
-        _ = await DiscussionService.pause(db, discussion_id)
-    except StateConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    if d.status == "ended":
+        raise HTTPException(status_code=409, detail="讨论已结束")
 
     runner = runner_registry.get(discussion_id)
     if runner:
-        runner.pause()
+        runner.pause()  # runner writes DB status when it detects the event
+    else:
+        try:
+            await DiscussionService.pause(db, discussion_id)
+        except StateConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e))
     return ApiResponse(code=200, data={"discussion_id": discussion_id, "status": "paused"}, message="讨论已暂停")
 
 
@@ -117,18 +120,21 @@ async def resume_discussion(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        await DiscussionService.check_permission(db, discussion_id, x_session_id)
+        d = await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    try:
-        result = await DiscussionService.resume(db, discussion_id)
-    except StateConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    if d.status == "ended":
+        raise HTTPException(status_code=409, detail="讨论已结束")
 
     runner = runner_registry.get(discussion_id)
     if runner:
         runner.resume()
-    return ApiResponse(code=200, data=result, message="讨论已继续")
+    else:
+        try:
+            result = await DiscussionService.resume(db, discussion_id)
+        except StateConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+    return ApiResponse(code=200, data={"discussion_id": discussion_id, "status": "live"}, message="讨论已继续")
 
 
 @router.post("/{discussion_id}/next")

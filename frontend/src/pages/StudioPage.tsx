@@ -145,18 +145,19 @@ export function StudioPage() {
     return () => clearInterval(interval);
   }, [discussionId, currentDiscussion?.status]);
 
-  // ── 点击「开始讨论」— 直接在 pending 视图中处理 ──
+  // ── 点击「开始讨论」— 先在 REST 标记状态，再触发首轮发言 ──
   const handleStart = async () => {
     if (!discussionId) return;
     setStarting(true);
     try {
       await startDiscussion(discussionId);
-      // 更新 currentDiscussion.status → 触发 WS useEffect + 演播厅视图
       useDiscussionStore.setState((s) => ({
         currentDiscussion: s.currentDiscussion
           ? { ...s.currentDiscussion, status: 'live' as const }
           : null,
       }));
+      // Trigger first round (launches Runner + generates opening)
+      await advanceDiscussion(discussionId);
       addToast({ type: 'success', message: '讨论已开始' });
     } catch (e: any) {
       addToast({ type: 'error', message: e.message || '开始讨论失败' });
