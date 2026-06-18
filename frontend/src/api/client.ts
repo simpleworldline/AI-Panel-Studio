@@ -30,9 +30,9 @@ apiClient.interceptors.response.use(
   },
   (err) => {
     const data = err.response?.data ? keysToCamel(err.response.data) : null;
-    const message = data?.message || '网络错误，请稍后重试';
+    // 优先取 message，其次 detail（FastAPI HTTPException），最后通用文案
+    const message = data?.message || data?.detail || '网络错误，请稍后重试';
     const code = data?.code || err.response?.status || 0;
-    const detail = data?.detail || '';
-    return Promise.reject({ message, code, detail });
+    return Promise.reject({ message, code });
   },
 );

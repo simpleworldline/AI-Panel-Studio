@@ -21,7 +21,10 @@ export function PanelSetupPage() {
 
   useEffect(() => {
     if (!discussionId) return;
-    store.init(discussionId, 4);
+    // 从 URL 参数读取用户选择的嘉宾人数
+    const params = new URLSearchParams(window.location.search);
+    const count = parseInt(params.get('count') || '4', 10);
+    store.init(discussionId, count);
     store.generate(discussionId);
     return () => { store.reset(); };
   }, [discussionId]);

@@ -23,7 +23,7 @@ export function CreateDiscussionPage() {
     try {
       const res = await createDiscussion({ topic, expertCount, maxRounds });
       addToast({ type: 'success', message: '讨论创建成功' });
-      navigate(`/create/${res.data.id}/panel`);
+      navigate(`/create/${res.data.id}/panel?count=${expertCount}`);
     } catch (e: any) {
       addToast({ type: 'error', message: e.message || '创建失败' });
     } finally {

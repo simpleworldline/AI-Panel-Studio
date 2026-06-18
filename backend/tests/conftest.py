@@ -47,6 +47,12 @@ async def async_session(async_engine):
 
 
 @pytest.fixture
+def creator_headers():
+    """测试用的创建者 Session ID"""
+    return {"X-Session-Id": "test-session-creator"}
+
+
+@pytest.fixture
 async def client(async_session):
     """HTTPX async test client with dependency override"""
     from app.main import app

@@ -8,10 +8,6 @@ import pytest
 from httpx import AsyncClient
 
 
-@pytest.fixture
-def creator_headers():
-    return {"X-Session-Id": "test-session-creator"}
-
 
 # ============================================================
 # POST /api/discussions — 创建讨论

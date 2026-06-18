@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
+from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -52,6 +52,30 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "code": 422,
             "data": None,
             "message": "请求参数校验失败",
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": exc.status_code,
+            "data": None,
+            "message": str(exc.detail),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误",
         },
     )
 
