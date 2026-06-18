@@ -286,7 +286,7 @@ export function StudioPage() {
       <div className="flex items-center justify-center py-1.5 px-4
         bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)] shrink-0">
         <span className="text-sm text-[var(--color-studio-fg-muted)] truncate">
-          「{currentDiscussion.topic}」— 第 {currentRound} 轮
+          「{currentDiscussion.topic}」— 第 {totalUtterances} 条发言
         </span>
         {wsStatus !== 'connected' && (
           <span className="ml-3 text-[11px] text-[var(--color-studio-warning)]">

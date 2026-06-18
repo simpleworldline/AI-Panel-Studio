@@ -1,8 +1,8 @@
-"""DiscussionRunner — Agent-Mediator pattern with short-lived DB sessions.
+"""DiscussionRunner — utterance-count-based continuous debate.
 
-Avoids SQLite write contention by opening/closing a session per round.
-pause/resume/end are signaled through Events, the runner acts on them
-inside its own session.
+No rounds. Agents speak in a debate window: one speaks → rebuttals/responses
+follow naturally until no one responds. The debate window then restarts.
+Discussion ends when total utterances reach max_utterances or user ends.
 """
 
 import asyncio
@@ -10,7 +10,6 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import AsyncGenerator
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -33,32 +32,20 @@ def _now() -> str:
 
 
 class DiscussionRunner:
-    """Discussion lifecycle engine.
-
-    Each running discussion has one Runner instance in memory.
-    Uses short-lived DB sessions to avoid SQLite write contention.
-    Controlled by asyncio.Event for pause/resume/force-step/stop.
-    """
 
     def __init__(self, discussion_id: str, ws_manager):
         self.discussion_id = discussion_id
         self.ws = ws_manager
         self.scheduler = Scheduler()
         self.observer = ObserverAgent()
-        # Control events
         self._paused = asyncio.Event()
-        self._paused.set()                # initially running
+        self._paused.set()
         self._force_step = asyncio.Event()
         self._force_step.clear()
         self._stopped = asyncio.Event()
         self._stopped.clear()
-        self._session_factory: async_sessionmaker | None = None
 
     async def run(self, session_factory: async_sessionmaker) -> bool:
-        """Main discussion loop (runs as background task)."""
-        self._session_factory = session_factory
-
-        # Retry until discussion status=live (start endpoint may not have committed yet)
         for _ in range(5):
             async with session_factory() as db:
                 d = await db.get(Discussion, self.discussion_id)
@@ -66,32 +53,24 @@ class DiscussionRunner:
                     break
             await asyncio.sleep(0.5)
         else:
-            logger.warning(f"[{self.discussion_id[:8]}] status never became live, giving up")
+            logger.warning(f"[{self.discussion_id[:8]}] never became live")
             return False
 
         try:
-            # === 1. Opening statement ===
+            # ── Opening ──
             async with session_factory() as db:
-                d, host, experts = await self._init_round(db)
+                d, host, experts = await self._init_agents(db)
                 if d is None or host is None:
                     return False
-
-                opening = await self._agent_speak(db, host, [], d.topic, "opening", 0)
+                opening = await self._agent_speak(db, host, [], d.topic, "opening")
                 if opening:
                     await db.commit()
 
-            # === 2. Main debate loop ===
-            #
-            # Debate window model (非机械轮替):
-            #   One speaker speaks → all other agents re-evaluate desire
-            #   → if someone rebuts/questions → they speak
-            #   → repeat until no one responds → round ends
-            #
             transcript = [opening] if opening else []
-            round_count = 0
-            max_steps_per_round = 3  # 1 initial + 1 rebuttal + 1 response = round ends
 
-            while not self._stopped.is_set() and round_count < 100:
+            # ── Continuous debate ──
+            while not self._stopped.is_set():
+                # pause / force-step wait
                 if not self._paused.is_set():
                     await asyncio.wait(
                         [asyncio.create_task(self._paused.wait()),
@@ -99,53 +78,41 @@ class DiscussionRunner:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     self._force_step.clear()
+                    if self._stopped.is_set():
+                        break
                     continue
 
                 self._force_step.clear()
                 if self._stopped.is_set():
                     break
 
-                # === Start a new round ===
-                round_count += 1
-                step_in_round = 0
-                round_finished = False
-
-                # Broadcast all agents preparing for this round
+                # fresh session each debate cycle
                 async with session_factory() as db:
                     d2 = await db.get(Discussion, self.discussion_id)
                     if d2 is None or d2.status not in ("live",):
                         break
-                    if d2.max_rounds and d2.current_round >= d2.max_rounds:
-                        await self._end_discussion(db, d2, host, "max_rounds")
-                        break
 
-                    _, host, experts = await self._init_round(db)
+                    _, host, experts = await self._init_agents(db)
                     if host is None:
                         break
+
                     transcript = await self._load_transcript(db)
-                    all_agents = [host] + experts
+                    total = len(transcript)
 
-                    # Reset silent counters for new round
-                    for a in all_agents:
-                        a._rounds_silent = 0
-
-                # === Debate window: keep going until no one responds ===
-                last_speaker_id = None
-
-                while not round_finished and step_in_round < max_steps_per_round:
-                    if self._stopped.is_set():
+                    # ── End condition: utterance count ──
+                    max_utterances = d2.max_rounds or 15   # default 15 utterances
+                    if total >= max_utterances:
+                        await self._end_discussion(db, d2, host, "max_utterances")
                         break
 
-                    async with session_factory() as db:
-                        d2 = await db.get(Discussion, self.discussion_id)
-                        if d2 is None or d2.status not in ("live",):
-                            break
-                        _, host, experts = await self._init_round(db)
-                        if host is None:
-                            break
-                        transcript = await self._load_transcript(db)
-                        all_agents = [host] + experts
+                    all_agents = [host] + experts
 
+                    # ── Debate window: back-and-forth until silence ──
+                    steps = 0
+                    max_steps = 4          # 1 initial → 1 rebut → 1 reply → 1 host question max
+                    last_speaker_id = None
+
+                    while steps < max_steps and not self._stopped.is_set():
                         for agent in all_agents:
                             agent._desire = await agent.calculate_desire(transcript, d2.topic)
                             await self._broadcast(db, agent, "preparing")
@@ -156,41 +123,14 @@ class DiscussionRunner:
 
                         speaker = await self.scheduler.select_speaker(candidates)
                         if speaker is None:
-                            if step_in_round == 0:
-                                host._desire = 1.0
-                                await self._broadcast(db, host, "preparing")
-                                utterance = await self._agent_speak(
-                                    db, host, transcript, d2.topic,
-                                    "question", d2.current_round + 1,
-                                )
-                                if utterance:
-                                    last_speaker_id = host.member_id
-                                    transcript.append(utterance)
-                                    step_in_round += 1
-                                    await self._broadcast(db, host, "idle")
-                                    await db.commit()
-                                    # Check pause/end after utterance
-                                    if self._stopped.is_set():
-                                        await self._end_discussion(db, d2, host, "user_ended")
-                                        break
-                                    if not self._paused.is_set():
-                                        round_finished = True; break
-                                    continue
-
-                            round_finished = True
+                            # no one wants to speak → end this window
                             for a in all_agents:
                                 await self._broadcast(db, a, "idle")
-                            await db.commit()
                             break
 
-                        utype = "statement"
-                        if speaker.__class__.__name__ == "HostAgent":
-                            utype = "question" if step_in_round == 0 else "statement"
+                        utype = "question" if (speaker.__class__.__name__ == "HostAgent" and steps == 0) else "statement"
 
-                        utterance = await self._agent_speak(
-                            db, speaker, transcript, d2.topic,
-                            utype, d2.current_round + 1,
-                        )
+                        utterance = await self._agent_speak(db, speaker, transcript, d2.topic, utype)
 
                         if utterance:
                             last_speaker_id = speaker.member_id
@@ -198,64 +138,65 @@ class DiscussionRunner:
                             for a in all_agents:
                                 if a != speaker:
                                     a.mark_silent()
-
                             transcript.append(utterance)
 
+                            # Observer
                             existing = await self._load_consensus(db)
-                            latest = utterance
-                            analysis = await self.observer.analyze(transcript, latest, existing)
+                            analysis = await self.observer.analyze(transcript, utterance, existing)
                             if analysis:
                                 consensus_db = await self._save_consensus(db, analysis)
-                                record_for_ws = {
-                                    "id": consensus_db.id,
-                                    "type": analysis.get("type", "consensus"),
-                                    "title": analysis.get("title", ""),
-                                    "description": analysis.get("description", ""),
-                                    "source_utterance_ids": json.loads(consensus_db.source_utterance_ids) if consensus_db.source_utterance_ids else [],
-                                    "confidence": analysis.get("confidence", 0.5),
-                                    "is_resolved": bool(consensus_db.is_resolved),
-                                    "round_num": analysis.get("round_num", 0),
-                                }
                                 await self._broadcast_raw({
                                     "type": "consensus_update",
-                                    "data": {"action": analysis.get("action", "created"), "record": record_for_ws},
+                                    "data": {
+                                        "action": analysis.get("action", "created"),
+                                        "record": {
+                                            "id": consensus_db.id,
+                                            "type": analysis.get("type", "consensus"),
+                                            "title": analysis.get("title", ""),
+                                            "description": analysis.get("description", ""),
+                                            "source_utterance_ids": (
+                                                json.loads(consensus_db.source_utterance_ids)
+                                                if consensus_db.source_utterance_ids else []
+                                            ),
+                                            "confidence": analysis.get("confidence", 0.5),
+                                            "is_resolved": bool(consensus_db.is_resolved),
+                                            "round_num": analysis.get("round_num", 0),
+                                        },
+                                    },
                                 })
-                                logger.info(f"[{self.discussion_id[:8]}] consensus: {analysis.get('action')} {analysis.get('title','')}")
-
-                            step_in_round += 1
+                            steps += 1
 
                         await self._broadcast(db, speaker, "idle")
                         await db.commit()
 
-                        # ── Key: check pause/stop AFTER utterance completes ──
+                        # pause/stop after each utterance
                         if self._stopped.is_set():
                             for a in all_agents:
                                 await self._broadcast(db, a, "idle")
                             await self._end_discussion(db, d2, host, "user_ended")
-                            self._running = False
-                            return True  # exit run() entirely
+                            return True
                         if not self._paused.is_set():
-                            # Paused: end this round immediately, outer loop will block
                             for a in all_agents:
                                 await self._broadcast(db, a, "idle")
-                            round_finished = True
-                            logger.info(f"[{self.discussion_id[:8]}] Paused after utterance")
+                            logger.info(f"[{self.discussion_id[:8]}] paused")
                             break
 
-                # Update round counter
-                if not self._stopped.is_set():
-                    async with session_factory() as db:
-                        d2 = await db.get(Discussion, self.discussion_id)
-                        if d2:
-                            d2.current_round += 1
-                            await db.commit()
-                    logger.info(f"[{self.discussion_id[:8]}] Round {round_count} ended, {step_in_round} steps")
+                    # Update utterance counter in DB
+                    await db.refresh(d2)
+                    total_now_result = await db.execute(
+                        select(func.count(Utterance.id)).where(
+                            Utterance.discussion_id == self.discussion_id
+                        )
+                    )
+                    new_total = total_now_result.scalar() or 0
+                    d2.current_round = new_total   # reuse column as utterance counter
+                    await db.commit()
 
-            # === 3. End ===
+            # ── Auto-end ──
             async with session_factory() as db:
                 d3 = await db.get(Discussion, self.discussion_id)
                 if d3 and d3.status not in ("ended",):
-                    _, host, _ = await self._init_round(db)
+                    _, host, _ = await self._init_agents(db)
                     if host:
                         await self._end_discussion(db, d3, host, "host_decided")
 
@@ -266,7 +207,7 @@ class DiscussionRunner:
             logger.info(f"[{self.discussion_id[:8]}] stopped")
         return True
 
-    # ─── Public control API ───
+    # ─── Public API ───
     def pause(self):
         self._paused.clear()
 
@@ -284,10 +225,9 @@ class DiscussionRunner:
     def is_running(self) -> bool:
         return not self._stopped.is_set()
 
-    # ─── Internal helpers ───
+    # ─── Internal ───
 
-    async def _init_round(self, db: AsyncSession):
-        """Load discussion + agents within current session."""
+    async def _init_agents(self, db: AsyncSession):
         d = await db.get(Discussion, self.discussion_id)
         if d is None:
             return None, None, None
@@ -305,8 +245,7 @@ class DiscussionRunner:
                 experts.append(ExpertAgent(m.id, m.name, m.title, m.stance, m.color))
         return d, host, experts
 
-    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype, round_num) -> dict | None:
-        """Stream agent utterance → WS + DB, return formatted dict or None."""
+    async def _agent_speak(self, db: AsyncSession, agent, transcript, topic, utype) -> dict | None:
         await self._broadcast(db, agent, "speaking")
         text = ""
         async for token in agent.generate_utterance(transcript, topic):
@@ -317,13 +256,12 @@ class DiscussionRunner:
                     "utterance_id": f":{utype}:", "member_id": agent.member_id,
                     "member_name": agent.name, "member_title": agent.title,
                     "member_color": agent.color, "token": token,
-                    "sequence_num": len(transcript) + 1, "round_num": round_num,
+                    "sequence_num": len(transcript) + 1, "round_num": 0,
                     "is_first": (text == token), "is_last": False,
                 },
             })
         if not text:
             return None
-        # Save in DB
         seq_result = await db.execute(
             select(func.max(Utterance.sequence_num)).where(
                 Utterance.discussion_id == self.discussion_id
@@ -333,7 +271,7 @@ class DiscussionRunner:
         u = Utterance(
             id=str(uuid.uuid4()), discussion_id=self.discussion_id,
             panel_member_id=agent.member_id, content=text,
-            utterance_type=utype, round_num=round_num, sequence_num=max_seq + 1,
+            utterance_type=utype, round_num=0, sequence_num=max_seq + 1,
         )
         db.add(u)
         await db.flush()
@@ -346,9 +284,7 @@ class DiscussionRunner:
         return self._fmt_utterance(u, agent)
 
     async def _end_discussion(self, db: AsyncSession, d, host, reason: str):
-        """Generate host summary, mark ended, broadcast."""
         transcript = await self._load_transcript(db)
-        # Summary
         summary = ""
         async for token in host.generate_summary(transcript, d.topic):
             summary += token
@@ -358,14 +294,14 @@ class DiscussionRunner:
                     "utterance_id": ":summary:", "member_id": host.member_id,
                     "member_name": host.name, "member_title": host.title,
                     "member_color": host.color, "token": token,
-                    "sequence_num": len(transcript) + 1, "round_num": d.current_round + 1,
+                    "sequence_num": len(transcript) + 1, "round_num": 0,
                     "is_first": (summary == token), "is_last": False,
                 },
             })
         if summary:
             u = Utterance(id=str(uuid.uuid4()), discussion_id=self.discussion_id,
                          panel_member_id=host.member_id, content=summary,
-                         utterance_type="summary", round_num=d.current_round + 1,
+                         utterance_type="summary", round_num=0,
                          sequence_num=len(transcript) + 1)
             db.add(u)
             await db.flush()
@@ -387,14 +323,13 @@ class DiscussionRunner:
             "type": "discussion_ended",
             "data": {
                 "discussion_id": self.discussion_id, "end_reason": reason,
-                "total_rounds": d.current_round, "total_utterances": total_utterances,
+                "total_rounds": total_utterances, "total_utterances": total_utterances,
                 "ended_at": d.ended_at,
             },
         })
         logger.info(f"[{self.discussion_id[:8]}] ended: {reason}")
 
     async def _broadcast(self, db: AsyncSession, agent, status: str):
-        """Broadcast expert status + save log."""
         log = ExpertStatusLog(
             id=str(uuid.uuid4()), discussion_id=self.discussion_id,
             panel_member_id=agent.member_id, status=status,
@@ -414,14 +349,12 @@ class DiscussionRunner:
         })
 
     async def _broadcast_raw(self, event: dict):
-        """Send event to all connected WS clients."""
         try:
             await self.ws.broadcast(self.discussion_id, event)
         except Exception:
             pass
 
     async def _load_transcript(self, db: AsyncSession) -> list[dict]:
-        """Load transcript with member names."""
         result = await db.execute(
             select(Utterance)
             .where(Utterance.discussion_id == self.discussion_id)
@@ -436,19 +369,18 @@ class DiscussionRunner:
             )
             for m in m_result.scalars().all():
                 member_map[m.id] = m
-        transcript = []
-        for u in utterances:
-            m = member_map.get(u.panel_member_id)
-            transcript.append({
+        return [
+            {
                 "id": u.id, "panel_member_id": u.panel_member_id,
-                "member_name": m.name if m else "Unknown",
-                "member_title": m.title if m else "",
-                "member_color": m.color if m else "#000",
+                "member_name": member_map[u.panel_member_id].name if u.panel_member_id in member_map else "Unknown",
+                "member_title": member_map[u.panel_member_id].title if u.panel_member_id in member_map else "",
+                "member_color": member_map[u.panel_member_id].color if u.panel_member_id in member_map else "#000",
                 "content": u.content, "utterance_type": u.utterance_type,
                 "sequence_num": u.sequence_num, "round_num": u.round_num,
                 "created_at": u.created_at,
-            })
-        return transcript
+            }
+            for u in utterances
+        ]
 
     async def _load_consensus(self, db: AsyncSession) -> list[dict]:
         result = await db.execute(
