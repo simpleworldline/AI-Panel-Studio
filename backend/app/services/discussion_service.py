@@ -1,5 +1,6 @@
 """DiscussionService — 讨论生命周期管理"""
 
+import json
 import uuid
 from typing import AsyncGenerator
 
@@ -10,8 +11,14 @@ from sqlalchemy.orm import selectinload
 from app.models.discussion import Discussion
 from app.models.panel_member import PanelMember
 from app.models.utterance import Utterance
-from app.models.utterance import Utterance
 from app.models.consensus import ConsensusDisagreement
+
+
+def _parse_source_ids(raw: str) -> list:
+    try:
+        return json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 class PermissionError(Exception):
@@ -116,7 +123,7 @@ class DiscussionService:
         consensus_items = [
             {
                 "id": c.id, "type": c.type, "title": c.title, "description": c.description,
-                "source_utterance_ids": c.source_utterance_ids, "confidence": c.confidence,
+                "source_utterance_ids": _parse_source_ids(c.source_utterance_ids), "confidence": c.confidence,
                 "is_resolved": bool(c.is_resolved), "round_num": c.round_num,
             }
             for c in d.consensus_disagreements if c.type == "consensus"
@@ -124,7 +131,7 @@ class DiscussionService:
         disagreements = [
             {
                 "id": c.id, "type": c.type, "title": c.title, "description": c.description,
-                "source_utterance_ids": c.source_utterance_ids, "confidence": c.confidence,
+                "source_utterance_ids": _parse_source_ids(c.source_utterance_ids), "confidence": c.confidence,
                 "is_resolved": bool(c.is_resolved), "round_num": c.round_num,
             }
             for c in d.consensus_disagreements if c.type == "disagreement"

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.models.discussion import Discussion
 from app.models.panel_member import PanelMember
+from app.services.runner_registry import runner_registry
 
 router = APIRouter()
 
@@ -84,8 +85,12 @@ async def ws_discussion(
                     })
                     continue
 
-                # 广播控制事件
+                # 广播控制事件 (互相同步 WS + REST)
+                runner = runner_registry.get(discussion_id)
                 if event_type == "advance":
+                    if runner:
+                        import asyncio
+                        asyncio.create_task(runner.resume())
                     await manager.broadcast(discussion_id, {
                         "type": "discussion_control",
                         "data": {"action": "advance", "discussion_id": discussion_id},
@@ -93,6 +98,9 @@ async def ws_discussion(
                 elif event_type == "pause":
                     d.status = "paused"
                     await db.commit()
+                    if runner:
+                        import asyncio
+                        asyncio.create_task(runner.pause())
                     await manager.broadcast(discussion_id, {
                         "type": "discussion_paused",
                         "data": {"discussion_id": discussion_id, "timestamp": _now()},
@@ -100,6 +108,9 @@ async def ws_discussion(
                 elif event_type == "resume":
                     d.status = "live"
                     await db.commit()
+                    if runner:
+                        import asyncio
+                        asyncio.create_task(runner.resume())
                     await manager.broadcast(discussion_id, {
                         "type": "discussion_resumed",
                         "data": {"discussion_id": discussion_id, "timestamp": _now()},
@@ -107,6 +118,8 @@ async def ws_discussion(
                 elif event_type == "end":
                     d.status = "ended"
                     await db.commit()
+                    if runner:
+                        await runner.stop()
                     await manager.broadcast(discussion_id, {
                         "type": "discussion_ended",
                         "data": {

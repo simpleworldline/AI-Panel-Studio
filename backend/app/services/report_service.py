@@ -1,5 +1,7 @@
 """ReportService — 讨论报告聚合"""
 
+import json
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -8,6 +10,14 @@ from app.models.discussion import Discussion
 from app.models.panel_member import PanelMember
 from app.models.utterance import Utterance
 from app.models.consensus import ConsensusDisagreement
+
+
+def _parse_source_ids(raw: str) -> list:
+    """Parse source_utterance_ids from JSON string to list"""
+    try:
+        return json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 class ReportService:
@@ -37,9 +47,16 @@ class ReportService:
         )
         transcript = [
             {
-                "sequence_num": u.sequence_num, "member_name": u.panel_member.name,
-                "member_title": u.panel_member.title, "member_color": u.panel_member.color,
-                "content": u.content, "utterance_type": u.utterance_type,
+                "id": u.id,
+                "panel_member_id": u.panel_member_id,
+                "member_name": u.panel_member.name,
+                "member_title": u.panel_member.title,
+                "member_color": u.panel_member.color,
+                "content": u.content,
+                "utterance_type": u.utterance_type,
+                "sequence_num": u.sequence_num,
+                "round_num": u.round_num,
+                "created_at": u.created_at,
             }
             for u in utterance_result.scalars().all()
         ]
@@ -52,16 +69,15 @@ class ReportService:
         )
         all_cds = cd_result.scalars().all()
         consensus = [
-            {"id": c.id, "title": c.title, "description": c.description,
-             "source_utterance_ids": c.source_utterance_ids,
-             "confidence": c.confidence, "round_num": c.round_num}
+            {"id": c.id, "type": "consensus", "title": c.title, "description": c.description,
+             "source_utterance_ids": _parse_source_ids(c.source_utterance_ids), "confidence": c.confidence,
+             "is_resolved": bool(c.is_resolved), "round_num": c.round_num}
             for c in all_cds if c.type == "consensus"
         ]
         disagreements = [
-            {"id": c.id, "title": c.title, "description": c.description,
-             "source_utterance_ids": c.source_utterance_ids,
-             "confidence": c.confidence, "is_resolved": bool(c.is_resolved),
-             "round_num": c.round_num}
+            {"id": c.id, "type": "disagreement", "title": c.title, "description": c.description,
+             "source_utterance_ids": _parse_source_ids(c.source_utterance_ids), "confidence": c.confidence,
+             "is_resolved": bool(c.is_resolved), "round_num": c.round_num}
             for c in all_cds if c.type == "disagreement"
         ]
 
