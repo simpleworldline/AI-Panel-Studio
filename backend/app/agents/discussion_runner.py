@@ -332,10 +332,7 @@ class DiscussionRunner:
         return fmt
 
     async def _quick_end(self, db: AsyncSession, d, reason: str):
-        """Immediate end — write DB + broadcast, no summary."""
-        d.status = "ended"
-        d.ended_at = _now()
-        await db.commit()
+        """Immediate end — broadcast only (REST already wrote DB status)."""
         total = await db.execute(
             select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
         )
@@ -345,13 +342,13 @@ class DiscussionRunner:
             "data": {
                 "discussion_id": self.discussion_id, "end_reason": reason,
                 "total_rounds": total_utterances, "total_utterances": total_utterances,
-                "ended_at": d.ended_at,
+                "ended_at": _now(),
             },
         })
         logger.info(f"[{self.discussion_id[:8]}] quick-ended: {reason}")
 
     async def _end_discussion(self, db: AsyncSession, d, host, reason: str):
-        """Natural end — generate summary + mark ended + broadcast."""
+        """Natural end — generate summary + mark ended (if not already) + broadcast."""
         transcript = await self._load_transcript(db)
         summary = ""
         async for token in host.generate_summary(transcript, d.topic):
@@ -378,8 +375,9 @@ class DiscussionRunner:
                 "data": self._fmt_utterance(u, host),
             })
 
-        d.status = "ended"
-        d.ended_at = _now()
+        if d.status not in ("ended",):
+            d.status = "ended"
+            d.ended_at = _now()
         await db.commit()
         total = await db.execute(
             select(func.count(Utterance.id)).where(Utterance.discussion_id == self.discussion_id)
@@ -390,7 +388,7 @@ class DiscussionRunner:
             "data": {
                 "discussion_id": self.discussion_id, "end_reason": reason,
                 "total_rounds": total_utterances, "total_utterances": total_utterances,
-                "ended_at": d.ended_at,
+                "ended_at": d.ended_at or _now(),
             },
         })
         logger.info(f"[{self.discussion_id[:8]}] ended: {reason}")

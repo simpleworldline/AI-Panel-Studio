@@ -142,11 +142,11 @@ async def end_discussion(
     except PermissionError as e: raise HTTPException(status_code=403, detail=str(e))
     runner = runner_registry.get(discussion_id)
     if runner:
-        runner.stop()
-        runner_registry.remove(discussion_id)
-    else:
-        try: await DiscussionService.end(db, discussion_id)
-        except StateConflictError as e: raise HTTPException(status_code=409, detail=str(e))
+        runner.stop()   # signal runner to abort current utterance + clean up
+    try:
+        await DiscussionService.end(db, discussion_id)  # DB write ALWAYS
+    except StateConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return ApiResponse(code=200, data={
         "discussion_id": discussion_id, "status": "ended",
         "ended_at": _now(), "total_rounds": 0, "total_utterances": 0,
