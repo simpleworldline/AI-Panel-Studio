@@ -48,7 +48,11 @@ export function HomePage() {
       {/* tabs */}
       <div className="flex items-center gap-1 mb-4 p-0.5 rounded-lg bg-[var(--color-studio-bg)]
         border border-[var(--color-studio-border)] w-fit">
-        {(['live', 'ended'] as const).map((tab) => (
+        {([
+          ['live', '进行中'],
+          ['pending', '待开始'],
+          ['ended', '已结束'],
+        ] as const).map(([tab, label]) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -58,7 +62,7 @@ export function HomePage() {
                 : 'text-[var(--color-studio-fg-muted)] hover:text-[var(--color-studio-fg)]'
               }`}
           >
-            {tab === 'live' ? '进行中' : '已结束'}
+            {label}
           </button>
         ))}
       </div>
@@ -79,8 +83,16 @@ export function HomePage() {
         </div>
       ) : discussions.length === 0 ? (
         <EmptyState
-          title={activeTab === 'live' ? '暂无进行中的讨论' : '暂无已结束的讨论'}
-          description={activeTab === 'live' ? '发起一个新讨论，成为第一位主持人' : '完成一场讨论后，它将出现在这里'}
+          title={
+            activeTab === 'live' ? '暂无进行中的讨论' :
+            activeTab === 'pending' ? '暂无待开始的讨论' :
+            '暂无已结束的讨论'
+          }
+          description={
+            activeTab === 'live' ? '发起一个新讨论，成为第一位主持人' :
+            activeTab === 'pending' ? '创建讨论后，它将出现在这里' :
+            '完成一场讨论后，它将出现在这里'
+          }
           icon={
             <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
               <path d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-3" />

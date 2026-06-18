@@ -12,6 +12,7 @@ import { ControlBar } from '../components/ControlBar';
 import { Spinner } from '../components/ui/Spinner';
 import { Button } from '../components/ui/Button';
 import {
+  startDiscussion,
   pauseDiscussion,
   resumeDiscussion,
   advanceDiscussion,
@@ -165,10 +166,14 @@ export function StudioPage() {
 
   // ── Control commands ──
   const sendCommand = useCallback(
-    async (type: 'advance' | 'pause' | 'resume' | 'end') => {
+    async (type: 'start' | 'advance' | 'pause' | 'resume' | 'end') => {
       if (!discussionId) return;
       try {
-        if (type === 'pause') {
+        if (type === 'start') {
+          await startDiscussion(discussionId);
+          useStudioStore.getState().handleDiscussionResumed();
+          addToast({ type: 'success', message: '讨论已开始' });
+        } else if (type === 'pause') {
           await pauseDiscussion(discussionId);
         } else if (type === 'resume') {
           await resumeDiscussion(discussionId);
@@ -223,6 +228,53 @@ export function StudioPage() {
     );
   }
 
+  // ── Pending: 显示开始按钮 ──
+  if (currentDiscussion.status === 'pending') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-4">
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-[var(--color-studio-fg)] mb-2">
+            「{currentDiscussion.topic}」
+          </h2>
+          <p className="text-sm text-[var(--color-studio-fg-muted)] mb-1">
+            嘉宾阵容已就绪，共 {currentDiscussion.panel.length} 位嘉宾
+          </p>
+          <p className="text-xs text-[var(--color-studio-fg-subtle)]">
+            点击下方按钮开始圆桌讨论
+          </p>
+        </div>
+
+        {/* 嘉宾预览 */}
+        <div className="flex flex-wrap gap-3 justify-center max-w-lg">
+          {currentDiscussion.panel.map((m) => (
+            <div key={m.id} className="flex items-center gap-2 px-3 py-2 rounded-lg
+              bg-[var(--color-studio-card)] border border-[var(--color-studio-border)]">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+              <div className="text-left">
+                <div className="text-xs text-[var(--color-studio-fg)] font-medium">{m.name}</div>
+                <div className="text-[10px] text-[var(--color-studio-fg-muted)]">
+                  {m.role === 'host' ? '主持人' : '嘉宾'} · {m.title}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {isCreator && (
+          <Button variant="primary" size="lg" onClick={() => sendCommand('start')}>
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            开始讨论
+          </Button>
+        )}
+        {!isCreator && (
+          <p className="text-sm text-[var(--color-studio-fg-muted)]">等待主持人开始讨论…</p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* topic bar */}
@@ -238,20 +290,14 @@ export function StudioPage() {
         )}
       </div>
 
-      {/* Expert strip (800-1399px) */}
-      <div className="hidden md:flex lg:hidden gap-2 px-4 py-2
+      {/* Expert strip (< 1400px: horizontal) */}
+      <div className="flex lg:hidden gap-2 px-4 py-2
         bg-[var(--color-studio-elevated)] border-b border-[var(--color-studio-border)] overflow-x-auto shrink-0">
         <ExpertStatusPanel members={members} statuses={expertStatuses} compact />
       </div>
 
-      {/* Studio Grid */}
-      <div
-        className="flex-1 overflow-hidden"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '280px 1fr 320px',
-        }}
-      >
+      {/* Studio Grid — responsive: 3-col @ lg, 2-col @ md, 1-col @ base */}
+      <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[1fr_280px] lg:grid-cols-[280px_1fr_320px]">
         {/* Left: Expert Panel (hidden < 1400px via responsive) */}
         <aside className="hidden lg:flex flex-col overflow-y-auto border-r border-[var(--color-studio-border)]">
           <div className="sticky top-0 z-[var(--z-sticky)] flex items-center gap-2 px-4 py-3

@@ -10,15 +10,19 @@ const statusDot: Record<string, string> = {
   live: 'bg-[var(--color-studio-success)]',
   paused: 'bg-[var(--color-studio-warning)]',
   ended: 'bg-[var(--color-studio-fg-subtle)]',
+  pending: 'bg-[var(--color-studio-info)]',
 };
 
 export function DiscussionCard({ discussion }: DiscussionCardProps) {
   const navigate = useNavigate();
   const isLive = discussion.status === 'live' || discussion.status === 'paused';
+  const isPending = discussion.status === 'pending';
 
   const handleClick = () => {
     if (isLive) {
       navigate(`/studio/${discussion.id}`);
+    } else if (isPending) {
+      navigate(`/create/${discussion.id}/panel`);
     } else {
       navigate(`/report/${discussion.id}`);
     }
@@ -40,7 +44,8 @@ export function DiscussionCard({ discussion }: DiscussionCardProps) {
         <span className={`shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px]
           ${discussion.status === 'live' ? 'bg-[var(--color-studio-consensus-dim)]/30 text-[var(--color-studio-consensus)]' : ''}
           ${discussion.status === 'paused' ? 'bg-[var(--color-studio-warning)]/20 text-[var(--color-studio-warning)]' : ''}
-          ${discussion.status === 'ended' ? 'bg-[var(--color-studio-fg-subtle)]/20 text-[var(--color-studio-fg-muted)]' : ''}`}
+          ${discussion.status === 'ended' ? 'bg-[var(--color-studio-fg-subtle)]/20 text-[var(--color-studio-fg-muted)]' : ''}
+          ${discussion.status === 'pending' ? 'bg-[var(--color-studio-info)]/20 text-[var(--color-studio-info)]' : ''}`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${statusDot[discussion.status] || ''}`} />
           {statusLabel(discussion.status)}

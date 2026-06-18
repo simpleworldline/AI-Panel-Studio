@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.discussion import Discussion
 from app.models.panel_member import PanelMember
@@ -27,9 +28,12 @@ class ReportService:
             for m in panel_result.scalars().all()
         ]
 
-        # Transcript
+        # Transcript (eager load panel_member to avoid MissingGreenlet in production)
         utterance_result = await session.execute(
-            select(Utterance).where(Utterance.discussion_id == discussion_id).order_by(Utterance.sequence_num)
+            select(Utterance)
+            .where(Utterance.discussion_id == discussion_id)
+            .options(selectinload(Utterance.panel_member))
+            .order_by(Utterance.sequence_num)
         )
         transcript = [
             {

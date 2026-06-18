@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models.discussion import Discussion
 from app.models.panel_member import PanelMember
 from app.models.utterance import Utterance
+from app.models.utterance import Utterance
 from app.models.consensus import ConsensusDisagreement
 
 
@@ -87,7 +88,7 @@ class DiscussionService:
     async def get_detail(session: AsyncSession, discussion_id: str) -> dict | None:
         stmt = select(Discussion).where(Discussion.id == discussion_id).options(
             selectinload(Discussion.panel_members),
-            selectinload(Discussion.utterances),
+            selectinload(Discussion.utterances).selectinload(Utterance.panel_member),
             selectinload(Discussion.consensus_disagreements),
         )
         result = await session.execute(stmt)

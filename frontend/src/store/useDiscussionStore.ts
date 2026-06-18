@@ -7,7 +7,7 @@ interface DiscussionStoreState {
   discussions: DiscussionSummary[];
   listLoading: boolean;
   listError: string | null;
-  activeTab: 'live' | 'ended';
+  activeTab: 'live' | 'ended' | 'pending';
 
   // 当前详情
   currentDiscussion: DiscussionDetail | null;
@@ -15,10 +15,10 @@ interface DiscussionStoreState {
   detailError: string | null;
 
   // 操作
-  fetchList: (status?: 'live' | 'ended') => Promise<void>;
+  fetchList: (status?: 'live' | 'ended' | 'pending') => Promise<void>;
   fetchDetail: (id: string) => Promise<void>;
   clearCurrent: () => void;
-  setActiveTab: (tab: 'live' | 'ended') => void;
+  setActiveTab: (tab: 'live' | 'ended' | 'pending') => void;
 }
 
 export const useDiscussionStore = create<DiscussionStoreState>((set) => ({

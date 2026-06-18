@@ -10,7 +10,7 @@ import type {
 } from '../types/discussion';
 
 // GET /api/discussions
-export async function fetchDiscussions(status?: 'live' | 'ended', page = 1, pageSize = 50) {
+export async function fetchDiscussions(status?: 'live' | 'ended' | 'pending', page = 1, pageSize = 50) {
   const params: Record<string, string | number> = { page, pageSize };
   if (status) params.status = status;
   return apiClient.get<any, ApiResponse<PaginatedList<DiscussionSummary>>>('/discussions', { params });
