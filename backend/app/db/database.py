@@ -11,12 +11,14 @@ class Base(DeclarativeBase):
     pass
 
 
-# 导入所有模型，确保 Base.metadata 包含全部表
-from app.models.discussion import Discussion  # noqa: E402, F401
-from app.models.panel_member import PanelMember  # noqa: E402, F401
-from app.models.utterance import Utterance  # noqa: E402, F401
-from app.models.consensus import ConsensusDisagreement  # noqa: E402, F401
-from app.models.expert_status_log import ExpertStatusLog  # noqa: E402, F401
+def init_models():
+    """Import all models to register them with Base.metadata. Call before create_all."""
+    import app.models.discussion  # noqa: F401
+    import app.models.panel_member  # noqa: F401
+    import app.models.utterance  # noqa: F401
+    import app.models.consensus  # noqa: F401
+    import app.models.expert_status_log  # noqa: F401
+
 
 engine = create_async_engine(
     settings.database_url,

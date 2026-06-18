@@ -19,9 +19,14 @@ async def async_engine():
     """In-memory SQLite engine — 每次测试独立建表/删表"""
     from app.db.database import Base
 
+    from app.db.database import Base, init_models
+
     engine = create_async_engine("sqlite+aiosqlite://", echo=False, connect_args={"check_same_thread": False})
 
-    # 为测试引擎启用 WAL 模式 + 外键约束
+    # Register all models before create_all
+    init_models()
+
+    # Enable WAL + foreign keys
     @event.listens_for(engine.sync_engine, "connect")
     def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
