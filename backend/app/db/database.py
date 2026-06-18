@@ -35,8 +35,9 @@ async_session_factory = async_sessionmaker(
 
 @event.listens_for(engine.sync_engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
-    """连接时启用 WAL 模式 + 外键约束"""
+    """连接时启用 WAL + 外键 + busy_timeout（避免写锁冲突）"""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA foreign_keys=ON;")
+    cursor.execute("PRAGMA busy_timeout=5000;")  # 5秒等待锁定释放
     cursor.close()

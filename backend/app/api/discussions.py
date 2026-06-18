@@ -75,10 +75,11 @@ async def start_discussion(
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Launch DiscussionRunner as background task
+    # Launch DiscussionRunner as background task (keep reference to prevent GC)
     if not runner_registry.is_running(discussion_id):
         runner = runner_registry.create_runner(discussion_id, ws_manager)
-        asyncio.create_task(runner.run(async_session_factory))
+        task = asyncio.create_task(runner.run(async_session_factory))
+        runner_registry.set_task(discussion_id, task)
 
     return ApiResponse(code=200, data=result, message="讨论已开始")
 

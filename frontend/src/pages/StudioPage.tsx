@@ -169,15 +169,23 @@ export function StudioPage() {
   const sendCommand = useCallback(
     async (type: 'advance' | 'pause' | 'resume' | 'end') => {
       if (!discussionId) return;
+      const s = useStudioStore.getState();
       try {
         if (type === 'pause') {
           await pauseDiscussion(discussionId);
+          s.handleDiscussionPaused();
+          addToast({ type: 'info', message: '讨论已暂停' });
         } else if (type === 'resume') {
           await resumeDiscussion(discussionId);
+          s.handleDiscussionResumed();
+          addToast({ type: 'info', message: '讨论已继续' });
         } else if (type === 'advance') {
           await advanceDiscussion(discussionId);
+          addToast({ type: 'info', message: '已触发下一轮发言' });
         } else if (type === 'end') {
           await endDiscussion(discussionId);
+          s.handleDiscussionEnded();
+          addToast({ type: 'info', message: '讨论已结束' });
         }
       } catch (e: any) {
         addToast({ type: 'error', message: e.message || '操作失败，请重试' });

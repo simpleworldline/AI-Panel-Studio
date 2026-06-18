@@ -22,7 +22,9 @@ export function DiscussionCard({ discussion }: DiscussionCardProps) {
     if (isLive) {
       navigate(`/studio/${discussion.id}`);
     } else if (isPending) {
-      navigate(`/create/${discussion.id}/panel`);
+      // 已有嘉宾阵容 → 直接进入演播厅；无阵容 → 去编辑页
+      const hasPanel = discussion.memberPreview && discussion.memberPreview.length > 0;
+      navigate(hasPanel ? `/studio/${discussion.id}` : `/create/${discussion.id}/panel`);
     } else {
       navigate(`/report/${discussion.id}`);
     }
