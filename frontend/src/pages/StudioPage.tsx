@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDiscussionStore } from '../store/useDiscussionStore';
 import { useStudioStore } from '../store/useStudioStore';
@@ -27,6 +27,7 @@ export function StudioPage() {
   const { fetchDetail, detailLoading, detailError, currentDiscussion } = useDiscussionStore();
   const addToast = useToastStore((s) => s.addToast);
   const wsRef = useRef<StudioWebSocket | null>(null);
+  const [hasStarted, setHasStarted] = useState(false);  // 跟踪是否已点击开始
 
   // ── Init: fetch detail ──
   useEffect(() => {
@@ -172,6 +173,7 @@ export function StudioPage() {
         if (type === 'start') {
           await startDiscussion(discussionId);
           useStudioStore.getState().handleDiscussionResumed();
+          setHasStarted(true);
           addToast({ type: 'success', message: '讨论已开始' });
         } else if (type === 'pause') {
           await pauseDiscussion(discussionId);
@@ -228,8 +230,8 @@ export function StudioPage() {
     );
   }
 
-  // ── Pending: 显示开始按钮 ──
-  if (currentDiscussion.status === 'pending') {
+  // ── Pending: 显示开始按钮（未点击开始前） ──
+  if (currentDiscussion.status === 'pending' && !hasStarted) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-4">
         <div className="text-center">
