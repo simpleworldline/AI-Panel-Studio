@@ -83,12 +83,11 @@ async def pause_discussion(
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e: raise HTTPException(status_code=403, detail=str(e))
+    # Write DB immediately — status change takes priority over runner timing
+    try: await DiscussionService.pause(db, discussion_id)
+    except StateConflictError as e: raise HTTPException(status_code=409, detail=str(e))
     runner = runner_registry.get(discussion_id)
-    if runner:
-        runner.pause()
-    else:
-        try: await DiscussionService.pause(db, discussion_id)
-        except StateConflictError as e: raise HTTPException(status_code=409, detail=str(e))
+    if runner: runner.pause()
     return ApiResponse(code=200, data={"discussion_id": discussion_id, "status": "paused"}, message="讨论已暂停")
 
 
@@ -101,12 +100,12 @@ async def resume_discussion(
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e: raise HTTPException(status_code=403, detail=str(e))
+    # 1. Write DB immediately
+    try: await DiscussionService.resume(db, discussion_id)
+    except StateConflictError as e: raise HTTPException(status_code=409, detail=str(e))
+    # 2. Signal runner
     runner = runner_registry.get(discussion_id)
-    if runner:
-        runner.resume()
-    else:
-        try: await DiscussionService.resume(db, discussion_id)
-        except StateConflictError as e: raise HTTPException(status_code=409, detail=str(e))
+    if runner: runner.resume()
     return ApiResponse(code=200, data={"discussion_id": discussion_id, "status": "live"}, message="讨论已继续")
 
 
@@ -140,13 +139,16 @@ async def end_discussion(
     try:
         await DiscussionService.check_permission(db, discussion_id, x_session_id)
     except PermissionError as e: raise HTTPException(status_code=403, detail=str(e))
-    runner = runner_registry.get(discussion_id)
-    if runner:
-        runner.stop()   # signal runner to abort current utterance + clean up
+    # 1. Write DB immediately — status change takes priority over runner
     try:
-        await DiscussionService.end(db, discussion_id)  # DB write ALWAYS
+        await DiscussionService.end(db, discussion_id)
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    # 2. Signal runner (if exists) to abort current LLM call
+    runner = runner_registry.get(discussion_id)
+    if runner:
+        runner.stop()
+        runner_registry.remove(discussion_id)
     return ApiResponse(code=200, data={
         "discussion_id": discussion_id, "status": "ended",
         "ended_at": _now(), "total_rounds": 0, "total_utterances": 0,
