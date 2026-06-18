@@ -48,6 +48,8 @@ class DiscussionRunner:
         self.observer = ObserverAgent()
         self._paused = asyncio.Event()
         self._paused.set()          # 初始为运行状态（set = 不阻塞 wait）
+        self._force_step = asyncio.Event()
+        self._force_step.clear()    # 无强制步骤
         self._running = False
         self._task: asyncio.Task | None = None  # 保持后台任务引用
 
@@ -103,8 +105,8 @@ class DiscussionRunner:
                 # === 2. 主发言循环 ===
                 round_count = 0
                 while self._running and round_count < 100:  # 安全上限
-                    # 暂停等待
-                    await self._paused.wait()
+                    # 等待：要么非暂停状态，要么有强制步骤
+                    await self._wait_for_go()
 
                     # 检查外部状态变更
                     await db.refresh(d)
@@ -129,10 +131,17 @@ class DiscussionRunner:
                     # Scheduler 选出发言者（欲望值→时间→随机，主持人同分优先）
                     speaker = await self.scheduler.select_speaker(all_agents)
                     if speaker is None:
-                        # 无 Agent 欲望值达到阈值，短暂等待后重试
+                        # 无 Agent 欲望值达到阈值，广播 idle 状态后等待
                         for a in all_agents:
                             await self._broadcast_expert_status(a, "idle", db)
-                        await asyncio.sleep(0.5)
+                        # 短暂等待（force_step 或 resume 会立即唤醒）
+                        done, pending = await asyncio.wait(
+                            [asyncio.create_task(self._paused.wait()),
+                             asyncio.create_task(self._force_step.wait())],
+                            timeout=2.0
+                        )
+                        for t in pending:
+                            t.cancel()
                         continue
 
                     # 生成发言（流式推送）
@@ -187,6 +196,7 @@ class DiscussionRunner:
                     # 轮次递增
                     d.current_round += 1
                     round_count += 1
+                    self._force_step.clear()  # 本轮完成，清除强制标记
                     await db.commit()
 
             # 如果 while 循环正常结束（非 stop 触发），调用结束流程
@@ -209,13 +219,32 @@ class DiscussionRunner:
         """继续发言循环"""
         self._paused.set()
 
+    async def force_step(self):
+        """强制执行一轮发言（无论是否暂停）"""
+        self._force_step.set()
+
     async def stop(self):
         """停止 Runner"""
         self._running = False
-        self._paused.set()  # 解除可能的阻塞
+        self._paused.set()      # 解除 wait 阻塞
+        self._force_step.set()  # 解除 force_step 阻塞
 
     def is_running(self) -> bool:
         return self._running
+
+    async def _wait_for_go(self):
+        """等待运行信号：正常流程(paused event)或手动强制(force_step event)"""
+        # 如果没暂停，直接放行
+        if self._paused.is_set():
+            return
+        # 等待 paused 或 force_step 任一触发
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(self._paused.wait()),
+             asyncio.create_task(self._force_step.wait())],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in pending:
+            t.cancel()
 
     # ──────────────────────────────────────────────
     # Internal helpers (all must run within session)

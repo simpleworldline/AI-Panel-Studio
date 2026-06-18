@@ -142,10 +142,10 @@ async def next_round(
     except StateConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # Force advance: briefly pause then resume to trigger one loop iteration
+    # Force advance: trigger one round iteration immediately
     runner = runner_registry.get(discussion_id)
     if runner:
-        asyncio.create_task(runner.resume())
+        asyncio.create_task(runner.force_step())
 
     return ApiResponse(code=200, data=result, message="已触发下一轮发言")
 

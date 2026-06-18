@@ -246,13 +246,29 @@ export const useStudioStore = create<StudioStoreState>((set) => ({
     });
   },
 
-  handleInitialSnapshot: (data) => {
+  handleInitialSnapshot: (data: any) => {
     set((s) => ({
-      utterances: data.transcript || s.utterances,
+      utterances: (data.transcript || []).map((u: any) => ({
+        id: u.id, panelMemberId: u.panelMemberId,
+        memberName: u.memberName, memberTitle: u.memberTitle,
+        memberColor: u.memberColor, content: u.content,
+        utteranceType: u.utteranceType, sequenceNum: u.sequenceNum,
+        roundNum: u.roundNum, createdAt: u.createdAt,
+      })),
       consensusItems: data.consensus || s.consensusItems,
       disagreementItems: data.disagreements || s.disagreementItems,
       currentRound: data.currentRound ?? s.currentRound,
       totalUtterances: data.totalUtterances ?? s.totalUtterances,
+      status: (data.status === 'ended') ? 'ended' as const :
+              (data.status === 'paused') ? 'paused' as const :
+              (data.status === 'live') ? 'live' as const : s.status,
+      // Merge members from snapshot if provided and store is empty
+      members: (data.panel && s.members.length === 0)
+        ? (data.panel as any[]).map((p: any) => ({
+            id: p.id, name: p.name, title: p.title,
+            role: p.role, stance: p.stance, color: p.color,
+          }))
+        : s.members,
     }));
   },
 
